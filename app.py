@@ -62,81 +62,109 @@ from utils.heatmap import (
     get_distribution_summary,
     get_coverage_gaps,
 )
+from utils.chart_theme import (
+    COLORS,
+    SEVERITY_COLORS,
+    style_plotly_chart,
+    get_risk_color,
+)
 import pandas as pd
+from pathlib import Path
 
 # Load settings
 settings = get_settings()
 
 # Page configuration
 st.set_page_config(
-    page_title=settings.APP_TITLE,
-    page_icon=settings.APP_ICON,
+    page_title="AIUC-1 Eval Dashboard",
+    page_icon="https://www.aiuc-1.com/favicon.ico",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for clean table styling
-st.markdown("""
-<style>
-    /* Clean table styling */
-    .stDataFrame {
-        font-size: 14px;
-    }
 
-    .stDataFrame table {
-        border-collapse: collapse;
-        width: 100%;
-    }
+def load_custom_css():
+    """Load custom CSS styling from assets/custom.css or inline fallback."""
+    css_file = Path(__file__).parent / "assets" / "custom.css"
+    if css_file.exists():
+        with open(css_file) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    else:
+        # Inline fallback CSS for AIUC-1 theme
+        st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    .stDataFrame th {
-        background-color: #f0f2f6;
-        font-weight: 600;
-        text-align: left;
-        padding: 12px 8px;
-        border-bottom: 2px solid #e0e0e0;
-    }
+        .stApp { font-family: 'Inter', sans-serif; }
 
-    .stDataFrame td {
-        padding: 10px 8px;
-        border-bottom: 1px solid #e0e0e0;
-    }
+        h1, h2, h3, h4, h5, h6 {
+            font-weight: 600 !important;
+            letter-spacing: -0.02em;
+        }
 
-    .stDataFrame tr:hover {
-        background-color: #f8f9fa;
-    }
+        div[data-testid="stMetric"] {
+            background-color: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            padding: 1rem;
+        }
 
-    /* Metric cards */
-    div[data-testid="metric-container"] {
-        background-color: #f8f9fa;
-        border-radius: 8px;
-        padding: 16px;
-        border: 1px solid #e0e0e0;
-    }
+        div[data-testid="stMetric"] label {
+            color: #888 !important;
+            font-size: 0.875rem !important;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
 
-    /* Sidebar styling */
-    .css-1d391kg {
-        padding-top: 2rem;
-    }
+        .stButton > button {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+        }
 
-    /* Header styling */
-    h1 {
-        color: #1f2937;
-        font-weight: 700;
-    }
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        }
 
-    h2, h3 {
-        color: #374151;
-        font-weight: 600;
-    }
+        .stTabs [data-baseweb="tab-list"] {
+            background-color: #1a1a1a;
+            border-radius: 12px;
+            padding: 4px;
+        }
 
-    /* Clean dividers */
-    hr {
-        border: none;
-        border-top: 1px solid #e5e7eb;
-        margin: 1.5rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+        .stTabs [aria-selected="true"] {
+            background-color: #6366f1 !important;
+            color: white !important;
+        }
+
+        div[data-testid="stDataFrame"] {
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        section[data-testid="stSidebar"] {
+            background-color: #0a0a0a;
+            border-right: 1px solid #1a1a1a;
+        }
+
+        div[data-testid="stFileUploader"] {
+            background-color: #1a1a1a;
+            border: 2px dashed #333;
+            border-radius: 12px;
+        }
+
+        div[data-testid="stFileUploader"]:hover {
+            border-color: #6366f1;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+
+# Load custom styling
+load_custom_css()
 
 
 def df_to_clipboard_format(df) -> str:
@@ -674,13 +702,15 @@ def render_attack_distribution(df) -> None:
             st.caption("Copy the above text (Ctrl+C / Cmd+C)")
 
     with col2:
-        # Pie chart
+        # Pie chart with AIUC-1 theme
         fig = px.pie(
             dist,
             values='Count',
             names=selected_level,
             title=f"{selected_level} Distribution",
             hole=0.3,
+            color_discrete_sequence=[COLORS['primary'], COLORS['secondary'], COLORS['safety'],
+                                     COLORS['security'], COLORS['reliability'], COLORS['data_privacy']]
         )
         fig.update_traces(textposition='inside', textinfo='percent+label')
         fig.update_layout(
@@ -688,6 +718,7 @@ def render_attack_distribution(df) -> None:
             legend=dict(orientation="h", yanchor="bottom", y=-0.2),
             margin=dict(t=50, b=50, l=20, r=20),
         )
+        style_plotly_chart(fig)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -709,30 +740,20 @@ def render_failure_distribution(df) -> None:
         st.success("No failures found in the filtered data!")
         return
 
-    # Severity colors: yellow (P4) -> dark red (P0)
-    severity_colors = {
-        'P4': '#fbbf24',
-        'P3': '#f97316',
-        'P2': '#ef4444',
-        'P1': '#dc2626',
-        'P0': '#991b1b',
-    }
-
     col1, col2 = st.columns([1, 2])
 
     with col1:
         st.dataframe(dist, use_container_width=True, hide_index=True)
 
         # Copy button
-        if st.button("📋 Copy to Clipboard", key="copy_failure_dist"):
+        if st.button("Copy to Clipboard", key="copy_failure_dist"):
             clipboard_data = df_to_clipboard_format(dist)
             st.code(clipboard_data, language=None)
             st.caption("Copy the above text (Ctrl+C / Cmd+C)")
 
     with col2:
-        # Bar chart with severity colors
-        # Use #808080 (gray) as fallback for unknown severities
-        colors = [severity_colors.get(sev, '#808080') for sev in dist['Severity']]
+        # Bar chart with AIUC-1 severity colors
+        colors = [SEVERITY_COLORS.get(sev, COLORS['text_muted']) for sev in dist['Severity']]
 
         fig = go.Figure(data=[
             go.Bar(
@@ -751,6 +772,7 @@ def render_failure_distribution(df) -> None:
             showlegend=False,
             margin=dict(t=50, b=50, l=50, r=20),
         )
+        style_plotly_chart(fig)
 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1305,26 +1327,15 @@ def render_deep_dive(df, api_key: str) -> None:
 
         st.dataframe(display_stats, use_container_width=True, hide_index=True)
 
-        # Bar chart
-        fig = go.Figure(data=[
-            go.Bar(
-                x=stats['Category'],
-                y=stats['Pass Rate'].astype(float) if stats['Pass Rate'].dtype != float else stats['Pass Rate'],
-                marker_color=['#22c55e' if float(str(r).replace('%', '')) >= 90 else '#eab308' if float(str(r).replace('%', '')) >= 80 else '#ef4444'
-                             for r in display_stats['Pass Rate']],
-                text=display_stats['Pass Rate'],
-                textposition='auto',
-            )
-        ])
-
-        # Get numeric pass rates for the chart
+        # Get numeric pass rates for the bar chart
         numeric_rates = stats['Pass Rate'].tolist()
 
+        # Bar chart with conditional AIUC-1 colors
         fig = go.Figure(data=[
             go.Bar(
                 x=stats['Category'],
                 y=numeric_rates,
-                marker_color=['#22c55e' if r >= 90 else '#eab308' if r >= 80 else '#ef4444' for r in numeric_rates],
+                marker_color=[COLORS['pass'] if r >= 90 else COLORS['p4'] if r >= 80 else COLORS['safety'] for r in numeric_rates],
                 text=[f"{r:.1f}%" for r in numeric_rates],
                 textposition='auto',
             )
@@ -1338,6 +1349,7 @@ def render_deep_dive(df, api_key: str) -> None:
             margin=dict(t=50, b=100, l=50, r=20),
             xaxis_tickangle=-45,
         )
+        style_plotly_chart(fig)
 
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1971,7 +1983,7 @@ def render_comparison_analysis(
         name=f'{round1_name} (Baseline)',
         x=chart_data['Category'],
         y=chart_data['PASS % R1'],
-        marker_color='#94a3b8',
+        marker_color=COLORS['text_muted'],
         text=chart_data['PASS % R1'].apply(lambda x: f"{x:.1f}%"),
         textposition='auto',
     ))
@@ -1980,7 +1992,7 @@ def render_comparison_analysis(
         name=f'{round2_name} (Current)',
         x=chart_data['Category'],
         y=chart_data['PASS % R2'],
-        marker_color='#6366f1',
+        marker_color=COLORS['primary'],
         text=chart_data['PASS % R2'].apply(lambda x: f"{x:.1f}%"),
         textposition='auto',
     ))
@@ -1993,6 +2005,7 @@ def render_comparison_analysis(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=80, b=50, l=50, r=20),
     )
+    style_plotly_chart(fig)
 
     st.plotly_chart(fig, use_container_width=True)
 
@@ -2006,7 +2019,7 @@ def render_comparison_analysis(
         go.Bar(
             x=sorted_data['Category'],
             y=sorted_data['Change'],
-            marker_color=['#22c55e' if c > 0 else '#ef4444' if c < 0 else '#94a3b8'
+            marker_color=[COLORS['pass'] if c > 0 else COLORS['safety'] if c < 0 else COLORS['text_muted']
                          for c in sorted_data['Change']],
             text=sorted_data['Change'].apply(lambda x: f"{x:+.1f}%"),
             textposition='auto',
@@ -2020,6 +2033,7 @@ def render_comparison_analysis(
         margin=dict(t=50, b=100, l=50, r=20),
         xaxis_tickangle=-45,
     )
+    style_plotly_chart(fig2)
 
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -2361,39 +2375,79 @@ def safe_render(render_func, *args, **kwargs):
 
 
 def render_welcome_screen() -> None:
-    """Show welcome screen when no data is uploaded."""
-    st.title("📊 Eval Dashboard")
-    st.markdown("### Welcome! Upload your evaluation CSV to get started.")
+    """Show branded welcome screen when no data is uploaded."""
 
+    # Header with logo
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 0;">
+        <img src="https://www.aiuc-1.com/brand/aiuc1.svg" alt="AIUC-1" style="height: 48px; margin-bottom: 1rem;" onerror="this.style.display='none'">
+        <h1 style="font-size: 2.5rem; font-weight: 700; margin-bottom: 0.5rem;">
+            Eval Dashboard
+        </h1>
+        <p style="color: #888; font-size: 1.1rem;">
+            Analyze AI agent security evaluations
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Feature cards
     col1, col2, col3 = st.columns(3)
 
     with col1:
         st.markdown("""
-        #### 🗺️ Evals Heatmap
-        Visualize the distribution of attacks vs risks in your evaluation set.
-        """)
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">🗺️</div>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Test Coverage Heatmap</h3>
+            <p style="color: #888; font-size: 0.875rem;">Visualize the distribution of attacks vs risks in your evaluation set.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col2:
         st.markdown("""
-        #### 📊 Results Statistics
-        Analyze pass/fail rates, severity distributions, and trends.
-        """)
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">📊</div>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Results Statistics</h3>
+            <p style="color: #888; font-size: 0.875rem;">Analyze pass/fail rates, severity distributions, and trends.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col3:
         st.markdown("""
-        #### 🔬 Top Vulnerabilities
-        Deep dive into the most severe failures with AI-powered analysis.
-        """)
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">🔬</div>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Top Vulnerabilities</h3>
+            <p style="color: #888; font-size: 0.875rem;">Deep dive into the most severe failures with AI-powered analysis.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("<br><br>", unsafe_allow_html=True)
 
+    # Getting started steps
     st.markdown("""
-**To get started:**
-1. Upload your Round 1 CSV in the sidebar
-2. (Optional) Upload Round 2 CSV to enable comparison mode
-3. Map your columns to the expected fields
-4. Explore your data!
-    """)
+    <div style="background: #1a1a1a; border-radius: 12px; padding: 2rem; max-width: 600px; margin: 0 auto;">
+        <h3 style="text-align: center; margin-bottom: 1.5rem;">Get Started</h3>
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="background: #6366f1; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; flex-shrink: 0;">1</div>
+                <span>Upload your Round 1 CSV in the sidebar</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="background: #6366f1; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; flex-shrink: 0;">2</div>
+                <span>(Optional) Upload Round 2 CSV to enable comparison mode</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="background: #6366f1; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; flex-shrink: 0;">3</div>
+                <span>Map your columns to the expected fields</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <div style="background: #6366f1; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 600; flex-shrink: 0;">4</div>
+                <span>Explore your data!</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def load_data(uploaded_file) -> pd.DataFrame:
@@ -3226,7 +3280,7 @@ def render_passfail_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict)
 
 
 def render_severity_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict) -> None:
-    """Render severity distribution charts.
+    """Render severity distribution charts with AIUC-1 styling.
 
     Args:
         df1: Round 1 dataframe
@@ -3239,9 +3293,8 @@ def render_severity_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict)
     # Get failure data only
     failures1 = df1[df1['Severity'] != 'PASS']
 
-    # Severity order and colors
+    # Severity order and colors from theme
     order = ['P4', 'P3', 'P2', 'P1', 'P0']
-    colors = {'P4': '#fbbf24', 'P3': '#f97316', 'P2': '#ef4444', 'P1': '#dc2626', 'P0': '#991b1b'}
 
     col1, col2 = st.columns(2)
 
@@ -3258,9 +3311,10 @@ def render_severity_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict)
                 dist1, x='Severity', y='Count',
                 title='Round 1 - Failure Severity',
                 color='Severity',
-                color_discrete_map=colors
+                color_discrete_map=SEVERITY_COLORS
             )
             fig.update_layout(showlegend=False)
+            style_plotly_chart(fig)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.success("No failures in Round 1!")
@@ -3279,9 +3333,10 @@ def render_severity_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict)
                     dist2, x='Severity', y='Count',
                     title='Round 2 - Failure Severity',
                     color='Severity',
-                    color_discrete_map=colors
+                    color_discrete_map=SEVERITY_COLORS
                 )
                 fig.update_layout(showlegend=False)
+                style_plotly_chart(fig)
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.success("No failures in Round 2!")
@@ -3349,14 +3404,25 @@ def render_attack_effectiveness_section(df1: pd.DataFrame, df2: pd.DataFrame, ma
         # Chart
         chart_data = comparison.head(10).copy()
         fig = go.Figure()
-        fig.add_trace(go.Bar(name='Round 1', x=chart_data['Attack'], y=chart_data['Pass Rate R1'].astype(float)))
-        fig.add_trace(go.Bar(name='Round 2', x=chart_data['Attack'], y=chart_data['Pass Rate R2'].astype(float)))
+        fig.add_trace(go.Bar(
+            name='Round 1',
+            x=chart_data['Attack'],
+            y=chart_data['Pass Rate R1'].astype(float),
+            marker_color=COLORS['primary']
+        ))
+        fig.add_trace(go.Bar(
+            name='Round 2',
+            x=chart_data['Attack'],
+            y=chart_data['Pass Rate R2'].astype(float),
+            marker_color=COLORS['secondary']
+        ))
         fig.update_layout(
             title='Top 10 Most Effective Attacks (Lower = More Effective)',
             barmode='group',
             xaxis_tickangle=45,
             yaxis_title='Pass Rate %'
         )
+        style_plotly_chart(fig)
         st.plotly_chart(fig, use_container_width=True)
 
     else:
@@ -3367,9 +3433,11 @@ def render_attack_effectiveness_section(df1: pd.DataFrame, df2: pd.DataFrame, ma
 
         fig = px.bar(
             effectiveness1.head(10), x='Attack', y='Pass Rate',
-            title='Top 10 Most Effective Attacks (Lower = More Effective)'
+            title='Top 10 Most Effective Attacks (Lower = More Effective)',
+            color_discrete_sequence=[COLORS['primary']]
         )
         fig.update_layout(xaxis_tickangle=45)
+        style_plotly_chart(fig)
         st.plotly_chart(fig, use_container_width=True)
 
 
@@ -3412,13 +3480,19 @@ def render_trends_section(df1: pd.DataFrame, df2: pd.DataFrame, mapping: dict) -
 
     combined = pd.concat([rates1[['Category', 'Pass Rate', 'Round']], rates2[['Category', 'Pass Rate', 'Round']]])
 
-    # Line chart showing change
+    # Line chart showing change with risk-based colors
+    categories = combined['Category'].unique()
+    color_map = {cat: get_risk_color(cat) for cat in categories}
+
     fig = px.line(
         combined, x='Round', y='Pass Rate', color='Category',
         title='Pass Rate Trends by Category',
-        markers=True
+        markers=True,
+        color_discrete_map=color_map
     )
     fig.update_layout(yaxis_title='Pass Rate %')
+    fig.update_traces(line=dict(width=3), marker=dict(size=10))
+    style_plotly_chart(fig)
     st.plotly_chart(fig, use_container_width=True)
 
     # Show biggest changes
@@ -4105,9 +4179,18 @@ def main() -> None:
     if not check_auth():
         return
 
-    # Sidebar
+    # Sidebar with AIUC-1 branding
     with st.sidebar:
-        st.title(f"{settings.APP_ICON} {settings.APP_TITLE}")
+        # Logo and branding
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 12px; padding: 1rem 0; margin-bottom: 1rem; border-bottom: 1px solid #2a2a2a;">
+            <img src="https://www.aiuc-1.com/brand/aiuc1.svg" alt="AIUC-1" style="height: 32px;" onerror="this.style.display='none'">
+            <div>
+                <div style="font-weight: 600; font-size: 1rem;">Eval Dashboard</div>
+                <div style="font-size: 0.75rem; color: #666;">AI Agent Security Testing</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         # Show authenticated user if auth is enabled
         if settings.ENABLE_AUTH and st.session_state.get("authenticated_email"):
@@ -4116,10 +4199,8 @@ def main() -> None:
                 del st.session_state["authenticated_email"]
                 st.rerun()
 
-        st.divider()
-
         # File uploads section
-        st.header("📁 Data")
+        st.markdown("### 📁 Data")
 
         file1 = st.file_uploader("Round 1 CSV", type=['csv'], key="round1_file")
         file2 = st.file_uploader("Round 2 CSV (optional)", type=['csv'], key="round2_file")
@@ -4136,13 +4217,13 @@ def main() -> None:
         st.divider()
 
         # API Key section
-        st.header("🔑 API Key")
+        st.markdown("### 🔑 API Key")
         api_key = render_api_key_section()
 
         st.divider()
 
         # Quick actions
-        st.header("🚀 Quick Actions")
+        st.markdown("### 🚀 Quick Actions")
         if st.button("🤖 Ask AI a Question", use_container_width=True):
             st.session_state['show_ai_chat'] = True
 

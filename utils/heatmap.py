@@ -6,6 +6,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from typing import Tuple, Optional
 
+from utils.chart_theme import (
+    COLORS,
+    HEATMAP_COLORS,
+    DIVERGING_COLORS,
+    style_plotly_chart,
+    get_heatmap_colorscale
+)
+
 
 def create_heatmap_data(
     df: pd.DataFrame,
@@ -71,18 +79,18 @@ def create_pass_rate_heatmap_data(
 def create_heatmap_figure(
     data: pd.DataFrame,
     title: str = "Eval Distribution Heatmap",
-    color_scale: str = 'RdYlGn_r',
+    color_scale: str = None,
     value_format: str = '.1f',
     color_label: str = "% of Evals",
     show_text: bool = True,
     height: int = 500
 ) -> go.Figure:
-    """Create a Plotly heatmap figure.
+    """Create a Plotly heatmap figure with AIUC-1 styling.
 
     Args:
         data: DataFrame with values for heatmap
         title: Chart title
-        color_scale: Plotly color scale name
+        color_scale: Plotly color scale name (defaults to AIUC-1 theme)
         value_format: Format string for annotations
         color_label: Label for color bar
         show_text: Whether to show text annotations
@@ -97,6 +105,14 @@ def create_heatmap_figure(
         plot_data = plot_data.drop('Total', axis=0)
     if 'Total' in plot_data.columns:
         plot_data = plot_data.drop('Total', axis=1)
+
+    # Use AIUC-1 theme colorscale if not specified
+    if color_scale is None:
+        color_scale = HEATMAP_COLORS
+    elif color_scale == 'Blues':
+        color_scale = HEATMAP_COLORS
+    elif color_scale == 'RdYlGn':
+        color_scale = DIVERGING_COLORS
 
     fig = px.imshow(
         plot_data.values,
@@ -116,6 +132,17 @@ def create_heatmap_figure(
         xaxis={'tickangle': 45}
     )
 
+    # Apply AIUC-1 theme styling
+    style_plotly_chart(fig)
+
+    # Update colorbar styling
+    fig.update_coloraxes(
+        colorbar=dict(
+            tickfont=dict(color=COLORS['text_muted']),
+            titlefont=dict(color=COLORS['text'])
+        )
+    )
+
     return fig
 
 
@@ -125,7 +152,7 @@ def create_pass_rate_heatmap_figure(
     title: str = "Pass Rate Heatmap",
     height: int = 500
 ) -> go.Figure:
-    """Create a pass rate heatmap with count annotations.
+    """Create a pass rate heatmap with count annotations and AIUC-1 styling.
 
     Args:
         pass_rate: DataFrame with pass rates (0-100)
@@ -149,15 +176,27 @@ def create_pass_rate_heatmap_figure(
                 text_row.append("")
         text_matrix.append(text_row)
 
+    # Pass rate colorscale: red (bad) to green (good)
+    pass_rate_colors = [
+        [0, '#dc2626'],      # 0% - Red
+        [0.5, '#fbbf24'],    # 50% - Yellow
+        [0.75, '#84cc16'],   # 75% - Lime
+        [1, '#10b981']       # 100% - Green
+    ]
+
     fig = go.Figure(data=go.Heatmap(
         z=pass_rate.values,
         x=pass_rate.columns.tolist(),
         y=pass_rate.index.tolist(),
         text=text_matrix,
         texttemplate="%{text}",
-        textfont={"size": 10},
-        colorscale='RdYlGn',
-        colorbar=dict(title="Pass Rate %"),
+        textfont={"size": 10, "color": COLORS['text']},
+        colorscale=pass_rate_colors,
+        colorbar=dict(
+            title="Pass Rate %",
+            tickfont=dict(color=COLORS['text_muted']),
+            titlefont=dict(color=COLORS['text'])
+        ),
         hovertemplate="Risk: %{y}<br>Attack: %{x}<br>Pass Rate: %{z:.1f}%<extra></extra>"
     ))
 
@@ -168,6 +207,9 @@ def create_pass_rate_heatmap_figure(
         height=height,
         xaxis={'tickangle': 45}
     )
+
+    # Apply AIUC-1 theme styling
+    style_plotly_chart(fig)
 
     return fig
 
