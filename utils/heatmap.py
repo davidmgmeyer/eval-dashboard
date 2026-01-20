@@ -139,7 +139,7 @@ def create_heatmap_figure(
     fig.update_coloraxes(
         colorbar=dict(
             tickfont=dict(color=COLORS['text_muted']),
-            titlefont=dict(color=COLORS['text'])
+            title=dict(font=dict(color=COLORS['text']))
         )
     )
 
@@ -193,9 +193,8 @@ def create_pass_rate_heatmap_figure(
         textfont={"size": 10, "color": COLORS['text']},
         colorscale=pass_rate_colors,
         colorbar=dict(
-            title="Pass Rate %",
-            tickfont=dict(color=COLORS['text_muted']),
-            titlefont=dict(color=COLORS['text'])
+            title=dict(text="Pass Rate %", font=dict(color=COLORS['text'])),
+            tickfont=dict(color=COLORS['text_muted'])
         ),
         hovertemplate="Risk: %{y}<br>Attack: %{x}<br>Pass Rate: %{z:.1f}%<extra></extra>"
     ))
