@@ -4525,79 +4525,64 @@ def render_audit_report_assets(
     if 'Severity' not in df1.columns:
         st.warning("Severity column required for results summary.")
     else:
-        # Overall pass/fail summary
-        st.markdown("**Overall Results**")
-        total = len(df1)
-        passed = (df1['Severity'] == 'PASS').sum()
-        failed = total - passed
+        def _build_summary_table(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
+            """Build a summary table grouped by a column with severity breakdown."""
+            if group_col not in df.columns:
+                return pd.DataFrame()
 
-        overall_df = pd.DataFrame({
-            'Metric': ['Total Evaluations', 'Passed', 'Failed', 'Pass Rate'],
-            'Value': [f"{total:,}", f"{passed:,}", f"{failed:,}", f"{passed/total*100:.1f}%" if total > 0 else "N/A"]
-        })
+            stats = df.groupby(group_col).agg(
+                Count=('Severity', 'count'),
+                Pass=('Severity', lambda x: (x == 'PASS').sum()),
+                P4=('Severity', lambda x: (x == 'P4').sum()),
+                P3=('Severity', lambda x: (x == 'P3').sum()),
+                P2=('Severity', lambda x: (x == 'P2').sum()),
+                P1=('Severity', lambda x: (x == 'P1').sum()),
+                P0=('Severity', lambda x: (x == 'P0').sum()),
+            ).reset_index()
 
-        if df2 is not None and 'Severity' in df2.columns:
-            total2 = len(df2)
-            passed2 = (df2['Severity'] == 'PASS').sum()
-            failed2 = total2 - passed2
-            overall_df['Round 2'] = [
-                f"{total2:,}", f"{passed2:,}", f"{failed2:,}",
-                f"{passed2/total2*100:.1f}%" if total2 > 0 else "N/A"
-            ]
-            overall_df = overall_df.rename(columns={'Value': 'Round 1'})
+            stats = stats.rename(columns={group_col: 'Category'})
+            stats['Pass %'] = (stats['Pass'] / stats['Count'] * 100).round(1)
+            stats = stats.sort_values('Pass %', ascending=True).reset_index(drop=True)
 
-        st.dataframe(overall_df, use_container_width=True, hide_index=True)
+            # Format Pass % as string
+            display = stats[['Category', 'Count', 'Pass %', 'P4', 'P3', 'P2', 'P1', 'P0']].copy()
+            display['Pass %'] = display['Pass %'].apply(lambda x: f"{x:.1f}%")
 
-        if st.button("Copy to Clipboard", key="copy_overall_summary"):
-            clipboard_data = df_to_clipboard_format(overall_df)
-            st.code(clipboard_data, language=None)
-            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+            return display
 
-        # Severity breakdown
-        st.markdown("**Failure Severity Breakdown**")
-        severity_order = ['P4', 'P3', 'P2', 'P1', 'P0']
-        failures1 = df1[df1['Severity'] != 'PASS']
+        col_left, col_right = st.columns([1, 1])
 
-        if len(failures1) > 0:
-            sev_counts = failures1['Severity'].value_counts()
-            sev_rows = []
-            for sev in severity_order:
-                count = sev_counts.get(sev, 0)
-                pct = count / len(failures1) * 100 if len(failures1) > 0 else 0
-                row = {'Severity': sev, 'Count': count, '% of Failures': f"{pct:.1f}%"}
+        with col_left:
+            st.markdown("**Results by Attack L1**")
+            if 'Attack L1' in df1.columns:
+                attack_summary = _build_summary_table(df1, 'Attack L1')
+                if not attack_summary.empty:
+                    st.dataframe(attack_summary, use_container_width=True, hide_index=True)
 
-                if df2 is not None and 'Severity' in df2.columns:
-                    failures2 = df2[df2['Severity'] != 'PASS']
-                    count2 = failures2['Severity'].value_counts().get(sev, 0) if len(failures2) > 0 else 0
-                    pct2 = count2 / len(failures2) * 100 if len(failures2) > 0 else 0
-                    row['Count R2'] = count2
-                    row['% of Failures R2'] = f"{pct2:.1f}%"
+                    if st.button("Copy to Clipboard", key="copy_attack_summary"):
+                        clipboard_data = df_to_clipboard_format(attack_summary)
+                        st.code(clipboard_data, language=None)
+                        st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+                else:
+                    st.info("No data available.")
+            else:
+                st.warning("Attack L1 column not mapped.")
 
-                sev_rows.append(row)
+        with col_right:
+            st.markdown("**Results by Risk L2**")
+            if 'Risk L2' in df1.columns:
+                risk_summary = _build_summary_table(df1, 'Risk L2')
+                if not risk_summary.empty:
+                    st.dataframe(risk_summary, use_container_width=True, hide_index=True)
 
-            sev_df = pd.DataFrame(sev_rows)
-            st.dataframe(sev_df, use_container_width=True, hide_index=True)
-
-            if st.button("Copy to Clipboard", key="copy_severity_breakdown"):
-                clipboard_data = df_to_clipboard_format(sev_df)
-                st.code(clipboard_data, language=None)
-                st.caption("Copy the above text (Ctrl+C / Cmd+C)")
-        else:
-            st.success("No failures found in the data.")
-
-        # Per-category summary using the first risk level
-        if risk_cols:
-            st.markdown(f"**Results by {risk_cols[0]}**")
-            category_stats = calculate_stats_with_mapping(df1, risk_cols[0], mapping)
-
-            if not category_stats.empty:
-                display_stats = format_stats_for_display(category_stats)
-                st.dataframe(display_stats, use_container_width=True, hide_index=True)
-
-                if st.button("Copy to Clipboard", key="copy_category_summary"):
-                    clipboard_data = df_to_clipboard_format(display_stats)
-                    st.code(clipboard_data, language=None)
-                    st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+                    if st.button("Copy to Clipboard", key="copy_risk_summary"):
+                        clipboard_data = df_to_clipboard_format(risk_summary)
+                        st.code(clipboard_data, language=None)
+                        st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+                else:
+                    st.info("No data available.")
+            else:
+                st.warning("Risk L2 column not mapped.")
 
 
 def main() -> None:
