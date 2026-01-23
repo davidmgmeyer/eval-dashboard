@@ -189,6 +189,110 @@ div[data-testid="stAlert"] {
     font-size: 0.875rem;
 }
 
+/* Section headers with accent */
+.stApp h2 {
+    position: relative;
+    padding-left: 1rem;
+}
+
+.stApp h2::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.2em;
+    bottom: 0.2em;
+    width: 3px;
+    background: linear-gradient(180deg, #6366f1 0%, #8b5cf6 100%);
+    border-radius: 2px;
+}
+
+/* Audit Report Assets banner */
+.audit-banner {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border: 1px solid #2a2a2a;
+    border-left: 3px solid #6366f1;
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.audit-banner .audit-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(99, 102, 241, 0.15);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #818cf8;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.5rem;
+}
+
+.audit-banner p {
+    color: #aaa;
+    font-size: 0.875rem;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* Copy buttons - outline style with hover accent */
+.copy-btn .stButton > button {
+    background: transparent;
+    border: 1px solid #2a2a2a;
+    color: #888;
+    font-size: 0.8rem;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+}
+
+.copy-btn .stButton > button:hover {
+    border-color: #6366f1;
+    color: #6366f1;
+    background: rgba(99, 102, 241, 0.08);
+    transform: none;
+    box-shadow: none;
+}
+
+/* Table styling for professional copy-paste */
+div[data-testid="stDataFrame"] table {
+    border-collapse: collapse;
+}
+
+div[data-testid="stDataFrame"] th {
+    background-color: #1a1a1a;
+    border-bottom: 2px solid #2a2a2a;
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #888;
+}
+
+div[data-testid="stDataFrame"] td {
+    border-bottom: 1px solid #1f1f1f;
+    font-size: 0.85rem;
+}
+
+div[data-testid="stDataFrame"] tr:hover td {
+    background-color: rgba(99, 102, 241, 0.04);
+}
+
+/* Code block for clipboard output */
+.stCodeBlock {
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+}
+
+/* Section dividers */
+.stApp hr {
+    border-color: #1f1f1f;
+    margin: 2rem 0;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 8px;

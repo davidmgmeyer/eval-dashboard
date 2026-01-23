@@ -4278,7 +4278,14 @@ def render_audit_report_assets(
         api_key: Anthropic API key
     """
     st.header("Audit Report Assets")
-    st.markdown("Tables and data formatted for inclusion in audit reports.")
+
+    # AIUC-1 branding banner
+    st.markdown("""
+    <div class="audit-banner">
+        <div class="audit-badge">AIUC-1 AUDIT ASSETS</div>
+        <p>Generate publication-ready tables for your audit report. All tables are formatted for easy copy-paste into Google Docs or Word.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
     # --- Section 1: Risk Taxonomy ---
     st.subheader("Risk Taxonomy")
@@ -4331,7 +4338,7 @@ def render_audit_report_assets(
         if st.button("Copy to Clipboard", key="copy_risk_taxonomy"):
             clipboard_data = df_to_clipboard_format(edited_risk)
             st.code(clipboard_data, language=None)
-            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
         st.warning("Map risk columns to see the risk taxonomy.")
 
@@ -4388,7 +4395,7 @@ def render_audit_report_assets(
         if st.button("Copy to Clipboard", key="copy_attack_taxonomy"):
             clipboard_data = df_to_clipboard_format(edited_attack)
             st.code(clipboard_data, language=None)
-            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
         st.warning("Map attack columns to see the attack taxonomy.")
 
@@ -4513,7 +4520,7 @@ def render_audit_report_assets(
         if st.button("Copy to Clipboard", key="copy_examples"):
             clipboard_data = df_to_clipboard_format(examples_display)
             st.code(clipboard_data, language=None)
-            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
         st.info("No data available for sampling.")
 
@@ -4562,7 +4569,7 @@ def render_audit_report_assets(
                     if st.button("Copy to Clipboard", key="copy_attack_summary"):
                         clipboard_data = df_to_clipboard_format(attack_summary)
                         st.code(clipboard_data, language=None)
-                        st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+                        st.success("Table ready to copy (Ctrl+C / Cmd+C)")
                 else:
                     st.info("No data available.")
             else:
@@ -4578,7 +4585,7 @@ def render_audit_report_assets(
                     if st.button("Copy to Clipboard", key="copy_risk_summary"):
                         clipboard_data = df_to_clipboard_format(risk_summary)
                         st.code(clipboard_data, language=None)
-                        st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+                        st.success("Table ready to copy (Ctrl+C / Cmd+C)")
                 else:
                     st.info("No data available.")
             else:
