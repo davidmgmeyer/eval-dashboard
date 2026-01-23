@@ -4397,47 +4397,125 @@ def render_audit_report_assets(
     # --- Section 3: Example Evaluations ---
     st.subheader("Example Evaluations")
 
-    if 'Severity' not in df1.columns:
-        st.warning("Severity column required for example evaluations.")
+    # Initialize resample counter
+    if 'audit_resample_seed' not in st.session_state:
+        st.session_state['audit_resample_seed'] = 42
+
+    num_examples = st.number_input(
+        "Number of examples", min_value=1, max_value=50, value=10, key="audit_num_examples"
+    )
+
+    # Determine prompt column: prefer Transcript, fallback to Justification
+    prompt_source_col = None
+    if 'Transcript' in df1.columns:
+        prompt_source_col = 'Transcript'
+    elif 'Justification' in df1.columns:
+        prompt_source_col = 'Justification'
+
+    def _extract_prompt(text):
+        """Extract first user message from transcript, or return text as-is."""
+        if pd.isna(text) or not str(text).strip():
+            return ''
+        text = str(text)
+        # Try to extract first user message from common transcript formats
+        # Format: "User: ...\nAssistant: ..." or "human: ...\nassistant: ..."
+        import re
+        # Look for first user/human turn
+        patterns = [
+            r'(?:^|\n)\s*(?:User|Human|user|human)\s*[:\-]\s*(.*?)(?:\n\s*(?:Assistant|AI|assistant|ai|System|system)\s*[:\-]|$)',
+            r'(?:^|\n)\s*(?:role\s*[:\-]\s*user.*?content\s*[:\-]\s*)(.*?)(?:\n|$)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if match:
+                extracted = match.group(1).strip()
+                if extracted:
+                    return extracted[:500]  # Limit length for display
+
+        # No pattern matched — return first 500 chars as-is
+        return text[:500]
+
+    # Stratified sampling across Risk L1 categories
+    def _stratified_sample(df, n, seed):
+        """Sample n rows stratified by Risk L1 if available."""
+        n = min(n, len(df))
+        if n == 0:
+            return pd.DataFrame()
+
+        if 'Risk L1' in df.columns:
+            categories = df['Risk L1'].dropna().unique()
+            if len(categories) > 1:
+                # Allocate samples proportionally, at least 1 per category
+                per_category = max(1, n // len(categories))
+                remainder = n - (per_category * len(categories))
+
+                samples = []
+                for cat in categories:
+                    cat_df = df[df['Risk L1'] == cat]
+                    cat_n = min(per_category, len(cat_df))
+                    if cat_n > 0:
+                        samples.append(cat_df.sample(n=cat_n, random_state=seed))
+
+                result = pd.concat(samples, ignore_index=True)
+
+                # Fill remainder from full dataframe if needed
+                if len(result) < n:
+                    remaining_idx = df.index.difference(result.index)
+                    extra_n = min(n - len(result), len(remaining_idx))
+                    if extra_n > 0:
+                        extra = df.loc[remaining_idx].sample(n=extra_n, random_state=seed + 1)
+                        result = pd.concat([result, extra], ignore_index=True)
+
+                return result.head(n)
+
+        # Fallback: simple random sample
+        return df.sample(n=n, random_state=seed)
+
+    # Sample button row
+    col_resample, col_spacer = st.columns([1, 3])
+    with col_resample:
+        if st.button("Resample", key="audit_resample"):
+            st.session_state['audit_resample_seed'] += 1
+            if 'audit_example_evals' in st.session_state:
+                del st.session_state['audit_example_evals']
+            st.rerun()
+
+    # Generate or retrieve examples
+    current_seed = st.session_state['audit_resample_seed']
+
+    if 'audit_example_evals' not in st.session_state or st.session_state.get('_audit_last_n') != num_examples:
+        sampled = _stratified_sample(df1, num_examples, current_seed)
+
+        # Build display table
+        display_cols_map = {}
+        for col in ['Risk L1', 'Risk L2', 'Attack L1', 'Attack L2']:
+            if col in sampled.columns:
+                display_cols_map[col] = col
+
+        # Add Prompt column
+        if prompt_source_col and prompt_source_col in sampled.columns:
+            sampled = sampled.copy()
+            sampled['Prompt'] = sampled[prompt_source_col].apply(_extract_prompt)
+            display_cols_map['Prompt'] = 'Prompt'
+
+        display_cols = list(display_cols_map.values())
+        if display_cols:
+            st.session_state['audit_example_evals'] = sampled[display_cols].reset_index(drop=True)
+        else:
+            st.session_state['audit_example_evals'] = pd.DataFrame()
+        st.session_state['_audit_last_n'] = num_examples
+
+    examples_display = st.session_state['audit_example_evals']
+
+    if not examples_display.empty:
+        st.dataframe(examples_display, use_container_width=True, hide_index=True)
+
+        if st.button("Copy to Clipboard", key="copy_examples"):
+            clipboard_data = df_to_clipboard_format(examples_display)
+            st.code(clipboard_data, language=None)
+            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
     else:
-        # Let user pick which severity levels to show examples for
-        severity_options = ['P0', 'P1', 'P2', 'P3', 'P4', 'PASS']
-        available_severities = [s for s in severity_options if s in df1['Severity'].values]
-
-        selected_severities = st.multiselect(
-            "Show examples for severity levels:",
-            options=available_severities,
-            default=[s for s in ['P0', 'P1', 'P2'] if s in available_severities],
-            key="audit_example_severities"
-        )
-
-        n_examples = st.slider("Examples per severity", min_value=1, max_value=10, value=3, key="audit_n_examples")
-
-        if selected_severities:
-            # Build example table
-            example_rows = []
-            display_cols = []
-
-            # Determine which columns to show
-            for col in ['Risk L1', 'Risk L2', 'Attack L1', 'Attack L2', 'Severity', 'Justification']:
-                if col in df1.columns:
-                    display_cols.append(col)
-
-            for sev in selected_severities:
-                sev_df = df1[df1['Severity'] == sev]
-                sample = sev_df.head(n_examples)
-                example_rows.append(sample)
-
-            if example_rows:
-                examples_df = pd.concat(example_rows, ignore_index=True)
-                examples_display = examples_df[display_cols].copy()
-
-                st.dataframe(examples_display, use_container_width=True, hide_index=True)
-
-                if st.button("Copy to Clipboard", key="copy_examples"):
-                    clipboard_data = df_to_clipboard_format(examples_display)
-                    st.code(clipboard_data, language=None)
-                    st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+        st.info("No data available for sampling.")
 
     st.divider()
 
