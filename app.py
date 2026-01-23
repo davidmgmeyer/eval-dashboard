@@ -4173,6 +4173,355 @@ def render_top_vulnerabilities(df1: pd.DataFrame, df2: pd.DataFrame, mapping: di
             st.markdown(st.session_state['vuln_recommendations'])
 
 
+def _build_taxonomy_table(df: pd.DataFrame, l1_col: str, l2_col: str) -> pd.DataFrame:
+    """Build a taxonomy table with L1, L2, and empty Descriptor columns.
+
+    Args:
+        df: Input dataframe
+        l1_col: Column name for L1 categories
+        l2_col: Column name for L2 categories
+
+    Returns:
+        DataFrame with L1, L2, Descriptor columns
+    """
+    if l1_col not in df.columns:
+        return pd.DataFrame(columns=['L1', 'L2', 'Descriptor'])
+
+    if l2_col not in df.columns:
+        # Only L1 available
+        l1_values = sorted(df[l1_col].dropna().unique())
+        return pd.DataFrame({
+            'L1': l1_values,
+            'L2': [''] * len(l1_values),
+            'Descriptor': [''] * len(l1_values),
+        })
+
+    # Build L1/L2 pairs
+    rows = []
+    l1_values = sorted(df[l1_col].dropna().unique())
+    for l1 in l1_values:
+        l2_values = sorted(df[df[l1_col] == l1][l2_col].dropna().unique())
+        if not l2_values:
+            rows.append({'L1': l1, 'L2': '', 'Descriptor': ''})
+        else:
+            for l2 in l2_values:
+                rows.append({'L1': l1, 'L2': l2, 'Descriptor': ''})
+
+    return pd.DataFrame(rows)
+
+
+def _generate_taxonomy_descriptions(
+    taxonomy_df: pd.DataFrame,
+    taxonomy_type: str,
+    api_key: str
+) -> pd.DataFrame:
+    """Generate AI descriptions for taxonomy entries.
+
+    Args:
+        taxonomy_df: DataFrame with L1, L2, Descriptor columns
+        taxonomy_type: "Risk" or "Attack"
+        api_key: Anthropic API key
+
+    Returns:
+        DataFrame with Descriptor column filled in
+    """
+    import anthropic
+    client = anthropic.Anthropic(api_key=api_key)
+
+    # Build the list of entries to describe
+    entries = []
+    for _, row in taxonomy_df.iterrows():
+        if row['L2']:
+            entries.append(f"- {row['L1']} > {row['L2']}")
+        else:
+            entries.append(f"- {row['L1']}")
+
+    entries_text = "\n".join(entries)
+
+    prompt = f"""You are writing concise descriptors for an AI safety evaluation {taxonomy_type.lower()} taxonomy.
+Each entry is a category used to classify {'risks posed by AI agents' if taxonomy_type == 'Risk' else 'attack techniques used against AI agents'}.
+
+For each entry below, write a brief 1-sentence descriptor (max 15 words) explaining what it covers.
+Return ONLY the descriptors, one per line, in the same order as the input. No numbering, no prefixes.
+
+Entries:
+{entries_text}"""
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    descriptions = response.content[0].text.strip().split('\n')
+    descriptions = [d.strip().lstrip('- ').lstrip('•').strip() for d in descriptions if d.strip()]
+
+    result = taxonomy_df.copy()
+    for i in range(min(len(descriptions), len(result))):
+        result.iloc[i, result.columns.get_loc('Descriptor')] = descriptions[i]
+
+    return result
+
+
+def render_audit_report_assets(
+    df1: pd.DataFrame,
+    df2: pd.DataFrame,
+    mapping: dict,
+    api_key: str
+) -> None:
+    """Render audit report assets for export.
+
+    Args:
+        df1: Round 1 dataframe
+        df2: Round 2 dataframe (or None)
+        mapping: Column mapping dict
+        api_key: Anthropic API key
+    """
+    st.header("Audit Report Assets")
+    st.markdown("Tables and data formatted for inclusion in audit reports.")
+
+    # --- Section 1: Risk Taxonomy ---
+    st.subheader("Risk Taxonomy")
+
+    risk_cols = [f'Risk L{i+1}' for i in range(len(mapping.get('risk_hierarchy', [])))]
+    risk_cols = [c for c in risk_cols if c in df1.columns]
+
+    if len(risk_cols) >= 1:
+        l1_col = risk_cols[0]
+        l2_col = risk_cols[1] if len(risk_cols) > 1 else None
+
+        # Initialize session state for risk descriptors
+        if 'audit_risk_descriptors' not in st.session_state:
+            st.session_state['audit_risk_descriptors'] = _build_taxonomy_table(
+                df1, l1_col, l2_col if l2_col else l1_col
+            )
+
+        # AI generation button
+        col_btn, col_spacer = st.columns([1, 3])
+        with col_btn:
+            if st.button("Generate AI Descriptions", key="gen_risk_desc"):
+                if not api_key:
+                    st.warning("API key required for AI descriptions.")
+                else:
+                    with st.spinner("Generating descriptions..."):
+                        updated = _generate_taxonomy_descriptions(
+                            st.session_state['audit_risk_descriptors'],
+                            "Risk",
+                            api_key
+                        )
+                        st.session_state['audit_risk_descriptors'] = updated
+                        st.rerun()
+
+        # Editable table
+        edited_risk = st.data_editor(
+            st.session_state['audit_risk_descriptors'],
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                'L1': st.column_config.TextColumn('L1', disabled=True),
+                'L2': st.column_config.TextColumn('L2', disabled=True),
+                'Descriptor': st.column_config.TextColumn('Descriptor', width='large'),
+            },
+            key="risk_taxonomy_editor"
+        )
+        st.session_state['audit_risk_descriptors'] = edited_risk
+
+        # Copy button
+        if st.button("Copy to Clipboard", key="copy_risk_taxonomy"):
+            clipboard_data = df_to_clipboard_format(edited_risk)
+            st.code(clipboard_data, language=None)
+            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+    else:
+        st.warning("Map risk columns to see the risk taxonomy.")
+
+    st.divider()
+
+    # --- Section 2: Attack Taxonomy ---
+    st.subheader("Attack Taxonomy")
+
+    attack_cols = [f'Attack L{i+1}' for i in range(len(mapping.get('attack_hierarchy', [])))]
+    attack_cols = [c for c in attack_cols if c in df1.columns]
+
+    if len(attack_cols) >= 1:
+        l1_col = attack_cols[0]
+        l2_col = attack_cols[1] if len(attack_cols) > 1 else None
+
+        # Initialize session state for attack descriptors
+        if 'audit_attack_descriptors' not in st.session_state:
+            st.session_state['audit_attack_descriptors'] = _build_taxonomy_table(
+                df1, l1_col, l2_col if l2_col else l1_col
+            )
+
+        # AI generation button
+        col_btn, col_spacer = st.columns([1, 3])
+        with col_btn:
+            if st.button("Generate AI Descriptions", key="gen_attack_desc"):
+                if not api_key:
+                    st.warning("API key required for AI descriptions.")
+                else:
+                    with st.spinner("Generating descriptions..."):
+                        updated = _generate_taxonomy_descriptions(
+                            st.session_state['audit_attack_descriptors'],
+                            "Attack",
+                            api_key
+                        )
+                        st.session_state['audit_attack_descriptors'] = updated
+                        st.rerun()
+
+        # Editable table
+        edited_attack = st.data_editor(
+            st.session_state['audit_attack_descriptors'],
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            column_config={
+                'L1': st.column_config.TextColumn('L1', disabled=True),
+                'L2': st.column_config.TextColumn('L2', disabled=True),
+                'Descriptor': st.column_config.TextColumn('Descriptor', width='large'),
+            },
+            key="attack_taxonomy_editor"
+        )
+        st.session_state['audit_attack_descriptors'] = edited_attack
+
+        # Copy button
+        if st.button("Copy to Clipboard", key="copy_attack_taxonomy"):
+            clipboard_data = df_to_clipboard_format(edited_attack)
+            st.code(clipboard_data, language=None)
+            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+    else:
+        st.warning("Map attack columns to see the attack taxonomy.")
+
+    st.divider()
+
+    # --- Section 3: Example Evaluations ---
+    st.subheader("Example Evaluations")
+
+    if 'Severity' not in df1.columns:
+        st.warning("Severity column required for example evaluations.")
+    else:
+        # Let user pick which severity levels to show examples for
+        severity_options = ['P0', 'P1', 'P2', 'P3', 'P4', 'PASS']
+        available_severities = [s for s in severity_options if s in df1['Severity'].values]
+
+        selected_severities = st.multiselect(
+            "Show examples for severity levels:",
+            options=available_severities,
+            default=[s for s in ['P0', 'P1', 'P2'] if s in available_severities],
+            key="audit_example_severities"
+        )
+
+        n_examples = st.slider("Examples per severity", min_value=1, max_value=10, value=3, key="audit_n_examples")
+
+        if selected_severities:
+            # Build example table
+            example_rows = []
+            display_cols = []
+
+            # Determine which columns to show
+            for col in ['Risk L1', 'Risk L2', 'Attack L1', 'Attack L2', 'Severity', 'Justification']:
+                if col in df1.columns:
+                    display_cols.append(col)
+
+            for sev in selected_severities:
+                sev_df = df1[df1['Severity'] == sev]
+                sample = sev_df.head(n_examples)
+                example_rows.append(sample)
+
+            if example_rows:
+                examples_df = pd.concat(example_rows, ignore_index=True)
+                examples_display = examples_df[display_cols].copy()
+
+                st.dataframe(examples_display, use_container_width=True, hide_index=True)
+
+                if st.button("Copy to Clipboard", key="copy_examples"):
+                    clipboard_data = df_to_clipboard_format(examples_display)
+                    st.code(clipboard_data, language=None)
+                    st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+
+    st.divider()
+
+    # --- Section 4: Results Summary Tables ---
+    st.subheader("Results Summary Tables")
+
+    if 'Severity' not in df1.columns:
+        st.warning("Severity column required for results summary.")
+    else:
+        # Overall pass/fail summary
+        st.markdown("**Overall Results**")
+        total = len(df1)
+        passed = (df1['Severity'] == 'PASS').sum()
+        failed = total - passed
+
+        overall_df = pd.DataFrame({
+            'Metric': ['Total Evaluations', 'Passed', 'Failed', 'Pass Rate'],
+            'Value': [f"{total:,}", f"{passed:,}", f"{failed:,}", f"{passed/total*100:.1f}%" if total > 0 else "N/A"]
+        })
+
+        if df2 is not None and 'Severity' in df2.columns:
+            total2 = len(df2)
+            passed2 = (df2['Severity'] == 'PASS').sum()
+            failed2 = total2 - passed2
+            overall_df['Round 2'] = [
+                f"{total2:,}", f"{passed2:,}", f"{failed2:,}",
+                f"{passed2/total2*100:.1f}%" if total2 > 0 else "N/A"
+            ]
+            overall_df = overall_df.rename(columns={'Value': 'Round 1'})
+
+        st.dataframe(overall_df, use_container_width=True, hide_index=True)
+
+        if st.button("Copy to Clipboard", key="copy_overall_summary"):
+            clipboard_data = df_to_clipboard_format(overall_df)
+            st.code(clipboard_data, language=None)
+            st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+
+        # Severity breakdown
+        st.markdown("**Failure Severity Breakdown**")
+        severity_order = ['P4', 'P3', 'P2', 'P1', 'P0']
+        failures1 = df1[df1['Severity'] != 'PASS']
+
+        if len(failures1) > 0:
+            sev_counts = failures1['Severity'].value_counts()
+            sev_rows = []
+            for sev in severity_order:
+                count = sev_counts.get(sev, 0)
+                pct = count / len(failures1) * 100 if len(failures1) > 0 else 0
+                row = {'Severity': sev, 'Count': count, '% of Failures': f"{pct:.1f}%"}
+
+                if df2 is not None and 'Severity' in df2.columns:
+                    failures2 = df2[df2['Severity'] != 'PASS']
+                    count2 = failures2['Severity'].value_counts().get(sev, 0) if len(failures2) > 0 else 0
+                    pct2 = count2 / len(failures2) * 100 if len(failures2) > 0 else 0
+                    row['Count R2'] = count2
+                    row['% of Failures R2'] = f"{pct2:.1f}%"
+
+                sev_rows.append(row)
+
+            sev_df = pd.DataFrame(sev_rows)
+            st.dataframe(sev_df, use_container_width=True, hide_index=True)
+
+            if st.button("Copy to Clipboard", key="copy_severity_breakdown"):
+                clipboard_data = df_to_clipboard_format(sev_df)
+                st.code(clipboard_data, language=None)
+                st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+        else:
+            st.success("No failures found in the data.")
+
+        # Per-category summary using the first risk level
+        if risk_cols:
+            st.markdown(f"**Results by {risk_cols[0]}**")
+            category_stats = calculate_stats_with_mapping(df1, risk_cols[0], mapping)
+
+            if not category_stats.empty:
+                display_stats = format_stats_for_display(category_stats)
+                st.dataframe(display_stats, use_container_width=True, hide_index=True)
+
+                if st.button("Copy to Clipboard", key="copy_category_summary"):
+                    clipboard_data = df_to_clipboard_format(display_stats)
+                    st.code(clipboard_data, language=None)
+                    st.caption("Copy the above text (Ctrl+C / Cmd+C)")
+
+
 def main() -> None:
     """Main application entry point."""
     # Check authentication if enabled
@@ -4274,11 +4623,12 @@ def main() -> None:
     if df2_mapped is not None:
         st.info("📊 **Comparison Mode Active** - Showing Round 1 vs Round 2")
 
-    # Main 3-tab navigation
-    tab1, tab2, tab3 = st.tabs([
+    # Main 4-tab navigation
+    tab1, tab2, tab3, tab4 = st.tabs([
         "Evals Heatmap",
         "Results Statistics",
-        "Top Vulnerabilities"
+        "Top Vulnerabilities",
+        "Audit Report Assets"
     ])
 
     with tab1:
@@ -4289,6 +4639,9 @@ def main() -> None:
 
     with tab3:
         safe_render(render_top_vulnerabilities, df1_mapped, df2_mapped, mapping, api_key)
+
+    with tab4:
+        safe_render(render_audit_report_assets, df1_mapped, df2_mapped, mapping, api_key)
 
     # Floating AI Chat (if activated)
     if st.session_state.get('show_ai_chat', False):
