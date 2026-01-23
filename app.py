@@ -4339,11 +4339,23 @@ def render_audit_report_assets(
     </div>
     """, unsafe_allow_html=True)
 
+    # Comparison mode: choose which round to use
+    if df2 is not None:
+        audit_round = st.radio(
+            "Data source for audit assets:",
+            options=["Round 1", "Round 2"],
+            horizontal=True,
+            key="audit_round_selector"
+        )
+        active_df = df2 if audit_round == "Round 2" else df1
+    else:
+        active_df = df1
+
     # --- Section 1: Risk Taxonomy ---
     st.subheader("Risk Taxonomy")
 
     risk_cols = [f'Risk L{i+1}' for i in range(len(mapping.get('risk_hierarchy', [])))]
-    risk_cols = [c for c in risk_cols if c in df1.columns]
+    risk_cols = [c for c in risk_cols if c in active_df.columns]
 
     if len(risk_cols) >= 1:
         l1_col = risk_cols[0]
@@ -4352,12 +4364,12 @@ def render_audit_report_assets(
         # Initialize session state for risk descriptors
         if 'audit_risk_descriptors' not in st.session_state:
             st.session_state['audit_risk_descriptors'] = _build_taxonomy_table(
-                df1, l1_col, l2_col if l2_col else l1_col
+                active_df, l1_col, l2_col if l2_col else l1_col
             )
 
-        # AI generation button
-        col_btn, col_spacer = st.columns([1, 3])
-        with col_btn:
+        # Action buttons
+        col_ai, col_reset, col_spacer = st.columns([1, 1, 2])
+        with col_ai:
             if st.button("Generate AI Descriptions", key="gen_risk_desc"):
                 if not api_key:
                     st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
@@ -4376,6 +4388,14 @@ def render_audit_report_assets(
                             st.warning(str(e))
                         except Exception as e:
                             st.error(f"AI generation failed: {str(e)}")
+        with col_reset:
+            if st.button("Reset to Defaults", key="reset_risk_desc"):
+                st.session_state['audit_risk_descriptors'] = _build_taxonomy_table(
+                    active_df, l1_col, l2_col if l2_col else l1_col
+                )
+                if 'audit_risk_ai_descriptors' in st.session_state:
+                    del st.session_state['audit_risk_ai_descriptors']
+                st.rerun()
 
         # Show if AI descriptors were previously generated
         if 'audit_risk_ai_descriptors' in st.session_state:
@@ -4410,7 +4430,7 @@ def render_audit_report_assets(
     st.subheader("Attack Taxonomy")
 
     attack_cols = [f'Attack L{i+1}' for i in range(len(mapping.get('attack_hierarchy', [])))]
-    attack_cols = [c for c in attack_cols if c in df1.columns]
+    attack_cols = [c for c in attack_cols if c in active_df.columns]
 
     if len(attack_cols) >= 1:
         l1_col = attack_cols[0]
@@ -4419,12 +4439,12 @@ def render_audit_report_assets(
         # Initialize session state for attack descriptors
         if 'audit_attack_descriptors' not in st.session_state:
             st.session_state['audit_attack_descriptors'] = _build_taxonomy_table(
-                df1, l1_col, l2_col if l2_col else l1_col
+                active_df, l1_col, l2_col if l2_col else l1_col
             )
 
-        # AI generation button
-        col_btn, col_spacer = st.columns([1, 3])
-        with col_btn:
+        # Action buttons
+        col_ai, col_reset, col_spacer = st.columns([1, 1, 2])
+        with col_ai:
             if st.button("Generate AI Descriptions", key="gen_attack_desc"):
                 if not api_key:
                     st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
@@ -4443,6 +4463,14 @@ def render_audit_report_assets(
                             st.warning(str(e))
                         except Exception as e:
                             st.error(f"AI generation failed: {str(e)}")
+        with col_reset:
+            if st.button("Reset to Defaults", key="reset_attack_desc"):
+                st.session_state['audit_attack_descriptors'] = _build_taxonomy_table(
+                    active_df, l1_col, l2_col if l2_col else l1_col
+                )
+                if 'audit_attack_ai_descriptors' in st.session_state:
+                    del st.session_state['audit_attack_ai_descriptors']
+                st.rerun()
 
         # Show if AI descriptors were previously generated
         if 'audit_attack_ai_descriptors' in st.session_state:
@@ -4486,9 +4514,9 @@ def render_audit_report_assets(
 
     # Determine prompt column: prefer Transcript, fallback to Justification
     prompt_source_col = None
-    if 'Transcript' in df1.columns:
+    if 'Transcript' in active_df.columns:
         prompt_source_col = 'Transcript'
-    elif 'Justification' in df1.columns:
+    elif 'Justification' in active_df.columns:
         prompt_source_col = 'Justification'
 
     def _extract_prompt(text):
@@ -4563,7 +4591,7 @@ def render_audit_report_assets(
     current_seed = st.session_state['audit_resample_seed']
 
     if 'audit_example_evals' not in st.session_state or st.session_state.get('_audit_last_n') != num_examples:
-        sampled = _stratified_sample(df1, num_examples, current_seed)
+        sampled = _stratified_sample(active_df, num_examples, current_seed)
 
         # Build display table
         display_cols_map = {}
@@ -4601,7 +4629,7 @@ def render_audit_report_assets(
     # --- Section 4: Results Summary Tables ---
     st.subheader("Results Summary Tables")
 
-    if 'Severity' not in df1.columns:
+    if 'Severity' not in active_df.columns:
         st.warning("Severity column required for results summary.")
     else:
         def _build_summary_table(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
@@ -4633,8 +4661,8 @@ def render_audit_report_assets(
 
         with col_left:
             st.markdown("**Results by Attack L1**")
-            if 'Attack L1' in df1.columns:
-                attack_summary = _build_summary_table(df1, 'Attack L1')
+            if 'Attack L1' in active_df.columns:
+                attack_summary = _build_summary_table(active_df, 'Attack L1')
                 if not attack_summary.empty:
                     st.dataframe(attack_summary, use_container_width=True, hide_index=True)
 
@@ -4649,8 +4677,8 @@ def render_audit_report_assets(
 
         with col_right:
             st.markdown("**Results by Risk L2**")
-            if 'Risk L2' in df1.columns:
-                risk_summary = _build_summary_table(df1, 'Risk L2')
+            if 'Risk L2' in active_df.columns:
+                risk_summary = _build_summary_table(active_df, 'Risk L2')
                 if not risk_summary.empty:
                     st.dataframe(risk_summary, use_container_width=True, hide_index=True)
 
@@ -4662,6 +4690,56 @@ def render_audit_report_assets(
                     st.info("No data available.")
             else:
                 st.warning("Risk L2 column not mapped.")
+
+    # --- Section 5: Download All as CSV ---
+    st.markdown("---")
+    st.markdown("### 📥 Export All Audit Assets")
+
+    # Build combined CSV with section headers
+    csv_parts = []
+
+    # Risk Taxonomy
+    risk_key = 'audit_risk_taxonomy'
+    if risk_key in st.session_state and st.session_state[risk_key] is not None:
+        csv_parts.append("# SECTION: Risk Taxonomy")
+        csv_parts.append(st.session_state[risk_key].to_csv(index=False))
+
+    # Attack Taxonomy
+    attack_key = 'audit_attack_taxonomy'
+    if attack_key in st.session_state and st.session_state[attack_key] is not None:
+        csv_parts.append("# SECTION: Attack Taxonomy")
+        csv_parts.append(st.session_state[attack_key].to_csv(index=False))
+
+    # Example Evaluations
+    examples_key = 'audit_examples'
+    if examples_key in st.session_state and st.session_state[examples_key] is not None:
+        csv_parts.append("# SECTION: Example Evaluations")
+        csv_parts.append(st.session_state[examples_key].to_csv(index=False))
+
+    # Summary Tables
+    if 'Attack L1' in active_df.columns:
+        attack_summary = _build_summary_table(active_df, 'Attack L1')
+        if not attack_summary.empty:
+            csv_parts.append("# SECTION: Results by Attack L1")
+            csv_parts.append(attack_summary.to_csv(index=False))
+
+    if 'Risk L2' in active_df.columns:
+        risk_summary = _build_summary_table(active_df, 'Risk L2')
+        if not risk_summary.empty:
+            csv_parts.append("# SECTION: Results by Risk L2")
+            csv_parts.append(risk_summary.to_csv(index=False))
+
+    if csv_parts:
+        combined_csv = "\n".join(csv_parts)
+        st.download_button(
+            label="📥 Download All as CSV",
+            data=combined_csv,
+            file_name="audit_report_assets.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.info("No data available to export. Generate tables above first.")
 
 
 def main() -> None:
