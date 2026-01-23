@@ -4339,15 +4339,25 @@ def render_audit_report_assets(
     </div>
     """, unsafe_allow_html=True)
 
-    # Comparison mode: choose which round to use
+    # Comparison mode: choose which round to use (default to most recent)
     if df2 is not None:
         audit_round = st.radio(
             "Data source for audit assets:",
             options=["Round 1", "Round 2"],
+            index=1,  # Default to Round 2 (most recent)
             horizontal=True,
             key="audit_round_selector"
         )
         active_df = df2 if audit_round == "Round 2" else df1
+
+        # Clear cached tables when round changes
+        prev_round = st.session_state.get('_audit_prev_round')
+        if prev_round is not None and prev_round != audit_round:
+            for key in ['audit_risk_descriptors', 'audit_attack_descriptors',
+                        'audit_risk_ai_descriptors', 'audit_attack_ai_descriptors',
+                        'audit_example_evals', 'audit_examples']:
+                st.session_state.pop(key, None)
+        st.session_state['_audit_prev_round'] = audit_round
     else:
         active_df = df1
 
