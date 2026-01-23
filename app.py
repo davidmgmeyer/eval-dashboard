@@ -4224,28 +4224,69 @@ def _generate_taxonomy_descriptions(
 
     Returns:
         DataFrame with Descriptor column filled in
+
+    Raises:
+        ValueError: If API key is missing
+        Exception: Re-raises API errors for caller to handle
     """
+    if not api_key:
+        raise ValueError("API key required")
+
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Build the list of entries to describe
+    # Group entries by L1 for structured context
+    l1_groups = {}
+    for _, row in taxonomy_df.iterrows():
+        l1 = row['L1']
+        l2 = row['L2'] if row['L2'] else None
+        if l1 not in l1_groups:
+            l1_groups[l1] = []
+        if l2:
+            l1_groups[l1].append(l2)
+
+    # Build structured taxonomy context
+    taxonomy_context = ""
+    for l1, l2_list in l1_groups.items():
+        if l2_list:
+            taxonomy_context += f"\n{l1}:\n"
+            for l2 in l2_list:
+                taxonomy_context += f"  - {l2}\n"
+        else:
+            taxonomy_context += f"\n{l1} (top-level category, no subcategories)\n"
+
+    # Build the ordered list of entries for response alignment
     entries = []
     for _, row in taxonomy_df.iterrows():
         if row['L2']:
-            entries.append(f"- {row['L1']} > {row['L2']}")
+            entries.append(f"{row['L1']} > {row['L2']}")
         else:
-            entries.append(f"- {row['L1']}")
+            entries.append(f"{row['L1']}")
 
-    entries_text = "\n".join(entries)
+    entries_numbered = "\n".join(f"{i+1}. {e}" for i, e in enumerate(entries))
 
-    prompt = f"""You are writing concise descriptors for an AI safety evaluation {taxonomy_type.lower()} taxonomy.
-Each entry is a category used to classify {'risks posed by AI agents' if taxonomy_type == 'Risk' else 'attack techniques used against AI agents'}.
+    if taxonomy_type == 'Risk':
+        context_desc = "risks posed by AI agents during safety evaluations"
+        example = "e.g., 'Scenarios where the AI provides harmful medical advice without appropriate disclaimers.'"
+    else:
+        context_desc = "attack techniques used to test AI agent safety boundaries"
+        example = "e.g., 'Attempts to extract training data or system prompts through crafted queries.'"
 
-For each entry below, write a brief 1-sentence descriptor (max 15 words) explaining what it covers.
-Return ONLY the descriptors, one per line, in the same order as the input. No numbering, no prefixes.
+    prompt = f"""You are writing descriptors for an AI safety evaluation taxonomy used in audit reports.
+
+Context: These are {taxonomy_type.lower()} categories used to classify {context_desc}.
+
+Taxonomy structure:
+{taxonomy_context}
+
+For each entry below, write a brief 1-2 sentence descriptor (max 25 words) explaining what this category covers in the context of AI safety evaluation. Be specific and professional — these will appear in a formal audit report.
+
+Example format: {example}
+
+Write exactly one descriptor per line, matching the order below. No numbering, no bullet points, no prefixes — just the descriptor text.
 
 Entries:
-{entries_text}"""
+{entries_numbered}"""
 
     response = client.messages.create(
         model="claude-sonnet-4-20250514",
@@ -4254,11 +4295,22 @@ Entries:
     )
 
     descriptions = response.content[0].text.strip().split('\n')
-    descriptions = [d.strip().lstrip('- ').lstrip('•').strip() for d in descriptions if d.strip()]
+    # Clean up: remove numbering, bullets, dashes, quotes
+    cleaned = []
+    for d in descriptions:
+        d = d.strip()
+        if not d:
+            continue
+        # Strip leading number+period (e.g., "1. ")
+        import re
+        d = re.sub(r'^\d+\.\s*', '', d)
+        d = d.lstrip('- ').lstrip('•').lstrip('"').rstrip('"').strip()
+        if d:
+            cleaned.append(d)
 
     result = taxonomy_df.copy()
-    for i in range(min(len(descriptions), len(result))):
-        result.iloc[i, result.columns.get_loc('Descriptor')] = descriptions[i]
+    for i in range(min(len(cleaned), len(result))):
+        result.iloc[i, result.columns.get_loc('Descriptor')] = cleaned[i]
 
     return result
 
@@ -4308,16 +4360,26 @@ def render_audit_report_assets(
         with col_btn:
             if st.button("Generate AI Descriptions", key="gen_risk_desc"):
                 if not api_key:
-                    st.warning("API key required for AI descriptions.")
+                    st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
                 else:
-                    with st.spinner("Generating descriptions..."):
-                        updated = _generate_taxonomy_descriptions(
-                            st.session_state['audit_risk_descriptors'],
-                            "Risk",
-                            api_key
-                        )
-                        st.session_state['audit_risk_descriptors'] = updated
-                        st.rerun()
+                    with st.spinner("Generating risk taxonomy descriptions..."):
+                        try:
+                            updated = _generate_taxonomy_descriptions(
+                                st.session_state['audit_risk_descriptors'],
+                                "Risk",
+                                api_key
+                            )
+                            st.session_state['audit_risk_descriptors'] = updated
+                            st.session_state['audit_risk_ai_descriptors'] = updated.copy()
+                            st.rerun()
+                        except ValueError as e:
+                            st.warning(str(e))
+                        except Exception as e:
+                            st.error(f"AI generation failed: {str(e)}")
+
+        # Show if AI descriptors were previously generated
+        if 'audit_risk_ai_descriptors' in st.session_state:
+            st.caption("AI-generated descriptions loaded. Edit below before copying.")
 
         # Editable table
         edited_risk = st.data_editor(
@@ -4365,16 +4427,26 @@ def render_audit_report_assets(
         with col_btn:
             if st.button("Generate AI Descriptions", key="gen_attack_desc"):
                 if not api_key:
-                    st.warning("API key required for AI descriptions.")
+                    st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
                 else:
-                    with st.spinner("Generating descriptions..."):
-                        updated = _generate_taxonomy_descriptions(
-                            st.session_state['audit_attack_descriptors'],
-                            "Attack",
-                            api_key
-                        )
-                        st.session_state['audit_attack_descriptors'] = updated
-                        st.rerun()
+                    with st.spinner("Generating attack taxonomy descriptions..."):
+                        try:
+                            updated = _generate_taxonomy_descriptions(
+                                st.session_state['audit_attack_descriptors'],
+                                "Attack",
+                                api_key
+                            )
+                            st.session_state['audit_attack_descriptors'] = updated
+                            st.session_state['audit_attack_ai_descriptors'] = updated.copy()
+                            st.rerun()
+                        except ValueError as e:
+                            st.warning(str(e))
+                        except Exception as e:
+                            st.error(f"AI generation failed: {str(e)}")
+
+        # Show if AI descriptors were previously generated
+        if 'audit_attack_ai_descriptors' in st.session_state:
+            st.caption("AI-generated descriptions loaded. Edit below before copying.")
 
         # Editable table
         edited_attack = st.data_editor(
