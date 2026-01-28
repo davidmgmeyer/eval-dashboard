@@ -4343,6 +4343,7 @@ def render_audit_report_assets(
         api_key: Anthropic API key
     """
     # Canonical Attack L1 sort order
+    # Note: "Social Engineering" and "Manipulative" are interchangeable (customer-dependent naming)
     ATTACK_L1_ORDER = ["Benign", "Social Engineering", "Adversarial"]
 
     def sort_by_attack_order(df: pd.DataFrame, column: str = 'Attack L1') -> pd.DataFrame:
@@ -4353,7 +4354,9 @@ def render_audit_report_assets(
             return df
 
         # Create case-insensitive order map
+        # "Manipulative" is an alias for "Social Engineering" (same sort position)
         order_map = {v.lower(): i for i, v in enumerate(ATTACK_L1_ORDER)}
+        order_map['manipulative'] = order_map['social engineering']  # Alias
         df = df.copy()
         df['_sort_order'] = df[column].str.lower().str.strip().map(order_map).fillna(999)
         # Secondary sort: alphabetical for items not in order list
