@@ -2392,33 +2392,46 @@ def render_welcome_screen() -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Feature cards
-    col1, col2, col3 = st.columns(3)
+    # Feature cards - 2x2 grid
+    col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 180px;">
             <div style="font-size: 2.5rem; margin-bottom: 1rem;">🗺️</div>
-            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Test Coverage Heatmap</h3>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: #6366f1;">Test Coverage Heatmap</h3>
             <p style="color: #888; font-size: 0.875rem;">Visualize the distribution of attacks vs risks in your evaluation set.</p>
         </div>
         """, unsafe_allow_html=True)
 
     with col2:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 180px;">
             <div style="font-size: 2.5rem; margin-bottom: 1rem;">📊</div>
-            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Results Statistics</h3>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: #6366f1;">Results Statistics</h3>
             <p style="color: #888; font-size: 0.875rem;">Analyze pass/fail rates, severity distributions, and trends.</p>
         </div>
         """, unsafe_allow_html=True)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col3, col4 = st.columns(2)
+
     with col3:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 200px;">
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 180px;">
             <div style="font-size: 2.5rem; margin-bottom: 1rem;">🔬</div>
-            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem;">Top Vulnerabilities</h3>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: #6366f1;">Top Vulnerabilities</h3>
             <p style="color: #888; font-size: 0.875rem;">Deep dive into the most severe failures with AI-powered analysis.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #0f0f0f 100%); border: 1px solid #2a2a2a; border-radius: 16px; padding: 2rem; text-align: center; min-height: 180px;">
+            <div style="font-size: 2.5rem; margin-bottom: 1rem;">📋</div>
+            <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: #8b5cf6;">Audit Report Assets</h3>
+            <p style="color: #888; font-size: 0.875rem;">Generate publication-ready tables for your audit report. Export taxonomies, examples, and summaries for Google Docs or Word.</p>
         </div>
         """, unsafe_allow_html=True)
 
