@@ -4342,6 +4342,56 @@ def render_audit_report_assets(
         mapping: Column mapping dict
         api_key: Anthropic API key
     """
+    # Canonical Attack L1 sort order
+    ATTACK_L1_ORDER = ["Benign", "Social Engineering", "Adversarial"]
+
+    def sort_by_attack_order(df: pd.DataFrame, column: str = 'Attack L1') -> pd.DataFrame:
+        """Sort DataFrame by canonical Attack L1 order (case-insensitive)."""
+        if column not in df.columns and 'L1' in df.columns:
+            column = 'L1'
+        if column not in df.columns:
+            return df
+
+        # Create case-insensitive order map
+        order_map = {v.lower(): i for i, v in enumerate(ATTACK_L1_ORDER)}
+        df = df.copy()
+        df['_sort_order'] = df[column].str.lower().str.strip().map(order_map).fillna(999)
+        # Secondary sort: alphabetical for items not in order list
+        df['_sort_alpha'] = df[column].str.lower().str.strip()
+        df = df.sort_values(['_sort_order', '_sort_alpha']).drop(columns=['_sort_order', '_sort_alpha'])
+        return df.reset_index(drop=True)
+
+    def _build_summary_table(df: pd.DataFrame, group_col: str, use_attack_order: bool = False) -> pd.DataFrame:
+        """Build a summary table grouped by a column with severity breakdown."""
+        if group_col not in df.columns or 'Severity' not in df.columns:
+            return pd.DataFrame()
+
+        stats = df.groupby(group_col).agg(
+            Count=('Severity', 'count'),
+            Pass=('Severity', lambda x: (x == 'PASS').sum()),
+            P4=('Severity', lambda x: (x == 'P4').sum()),
+            P3=('Severity', lambda x: (x == 'P3').sum()),
+            P2=('Severity', lambda x: (x == 'P2').sum()),
+            P1=('Severity', lambda x: (x == 'P1').sum()),
+            P0=('Severity', lambda x: (x == 'P0').sum()),
+        ).reset_index()
+
+        stats = stats.rename(columns={group_col: 'Category'})
+        stats['Pass %'] = (stats['Pass'] / stats['Count'] * 100).round(1)
+
+        if use_attack_order:
+            # Apply canonical Attack L1 sort order
+            stats = sort_by_attack_order(stats, 'Category')
+        else:
+            # Default: sort by Pass % ascending
+            stats = stats.sort_values('Pass %', ascending=True).reset_index(drop=True)
+
+        # Format Pass % as string
+        display = stats[['Category', 'Count', 'Pass %', 'P4', 'P3', 'P2', 'P1', 'P0']].copy()
+        display['Pass %'] = display['Pass %'].apply(lambda x: f"{x:.1f}%")
+
+        return display
+
     st.header("Audit Report Assets")
 
     # AIUC-1 branding banner
@@ -4459,11 +4509,12 @@ def render_audit_report_assets(
         l1_col = attack_cols[0]
         l2_col = attack_cols[1] if len(attack_cols) > 1 else None
 
-        # Initialize session state for attack descriptors
+        # Initialize session state for attack descriptors (sorted by canonical order)
         if 'audit_attack_descriptors' not in st.session_state:
-            st.session_state['audit_attack_descriptors'] = _build_taxonomy_table(
+            attack_taxonomy = _build_taxonomy_table(
                 active_df, l1_col, l2_col if l2_col else l1_col
             )
+            st.session_state['audit_attack_descriptors'] = sort_by_attack_order(attack_taxonomy, 'L1')
 
         # Action buttons
         col_ai, col_reset, col_spacer = st.columns([1, 1, 2])
@@ -4488,9 +4539,10 @@ def render_audit_report_assets(
                             st.error(f"AI generation failed: {str(e)}")
         with col_reset:
             if st.button("Reset to Defaults", key="reset_attack_desc"):
-                st.session_state['audit_attack_descriptors'] = _build_taxonomy_table(
+                attack_taxonomy = _build_taxonomy_table(
                     active_df, l1_col, l2_col if l2_col else l1_col
                 )
+                st.session_state['audit_attack_descriptors'] = sort_by_attack_order(attack_taxonomy, 'L1')
                 if 'audit_attack_ai_descriptors' in st.session_state:
                     del st.session_state['audit_attack_ai_descriptors']
                 st.rerun()
@@ -4655,37 +4707,12 @@ def render_audit_report_assets(
     if 'Severity' not in active_df.columns:
         st.warning("Severity column required for results summary.")
     else:
-        def _build_summary_table(df: pd.DataFrame, group_col: str) -> pd.DataFrame:
-            """Build a summary table grouped by a column with severity breakdown."""
-            if group_col not in df.columns:
-                return pd.DataFrame()
-
-            stats = df.groupby(group_col).agg(
-                Count=('Severity', 'count'),
-                Pass=('Severity', lambda x: (x == 'PASS').sum()),
-                P4=('Severity', lambda x: (x == 'P4').sum()),
-                P3=('Severity', lambda x: (x == 'P3').sum()),
-                P2=('Severity', lambda x: (x == 'P2').sum()),
-                P1=('Severity', lambda x: (x == 'P1').sum()),
-                P0=('Severity', lambda x: (x == 'P0').sum()),
-            ).reset_index()
-
-            stats = stats.rename(columns={group_col: 'Category'})
-            stats['Pass %'] = (stats['Pass'] / stats['Count'] * 100).round(1)
-            stats = stats.sort_values('Pass %', ascending=True).reset_index(drop=True)
-
-            # Format Pass % as string
-            display = stats[['Category', 'Count', 'Pass %', 'P4', 'P3', 'P2', 'P1', 'P0']].copy()
-            display['Pass %'] = display['Pass %'].apply(lambda x: f"{x:.1f}%")
-
-            return display
-
         col_left, col_right = st.columns([1, 1])
 
         with col_left:
             st.markdown("**Results by Attack L1**")
             if 'Attack L1' in active_df.columns:
-                attack_summary = _build_summary_table(active_df, 'Attack L1')
+                attack_summary = _build_summary_table(active_df, 'Attack L1', use_attack_order=True)
                 if not attack_summary.empty:
                     st.dataframe(attack_summary, use_container_width=True, hide_index=True)
 
@@ -4741,7 +4768,7 @@ def render_audit_report_assets(
 
     # Summary Tables
     if 'Attack L1' in active_df.columns:
-        attack_summary = _build_summary_table(active_df, 'Attack L1')
+        attack_summary = _build_summary_table(active_df, 'Attack L1', use_attack_order=True)
         if not attack_summary.empty:
             csv_parts.append("# SECTION: Results by Attack L1")
             csv_parts.append(attack_summary.to_csv(index=False))
