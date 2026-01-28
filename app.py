@@ -4688,22 +4688,54 @@ def render_audit_report_assets(
 
     render_export_section(all_tables, round_label)
 
-    # ==================== SECTION 1: RISK TAXONOMY ====================
-
-    st.subheader("Risk Taxonomy")
+    # ========== 1. RISK TAXONOMY ==========
+    st.subheader("📊 Risk Taxonomy")
 
     if risk_taxonomy_df is not None and not risk_taxonomy_df.empty:
         l1_col = risk_cols[0]
         l2_col = risk_cols[1] if len(risk_cols) > 1 else None
 
-        # Action buttons
-        col_ai, col_reset, col_download = st.columns([1, 1, 1])
-        with col_ai:
-            if st.button("🤖 Generate AI Descriptions", key="gen_risk_desc"):
-                if not api_key:
-                    st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
-                else:
-                    with st.spinner("Generating risk taxonomy descriptions..."):
+        col_table, col_actions = st.columns([4, 1])
+
+        with col_table:
+            # Show AI generation notice
+            if 'audit_risk_ai_descriptors' in st.session_state:
+                st.caption("✨ AI-generated descriptions loaded. Edit below.")
+
+            # Editable table for descriptors
+            edited_risk = st.data_editor(
+                st.session_state['audit_risk_descriptors'],
+                column_config={
+                    "L1": st.column_config.TextColumn("L1", disabled=True),
+                    "L2": st.column_config.TextColumn("L2", disabled=True),
+                    "Descriptor": st.column_config.TextColumn(
+                        "Descriptor",
+                        help="Add a description for this risk category",
+                        width="large"
+                    ),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                key="risk_taxonomy_editor"
+            )
+            st.session_state['audit_risk_descriptors'] = edited_risk
+
+        with col_actions:
+            # Individual download button
+            risk_docx = create_single_table_docx(edited_risk, "Risk Taxonomy")
+            st.download_button(
+                "⬇️ .docx",
+                data=risk_docx,
+                file_name="risk_taxonomy.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_risk_docx"
+            )
+
+            # AI Generate button
+            if api_key:
+                if st.button("✨ AI Fill", key="ai_risk_descriptors", help="Generate descriptions using AI"):
+                    with st.spinner("Generating..."):
                         try:
                             updated = _generate_taxonomy_descriptions(
                                 st.session_state['audit_risk_descriptors'],
@@ -4713,73 +4745,66 @@ def render_audit_report_assets(
                             st.session_state['audit_risk_descriptors'] = updated
                             st.session_state['audit_risk_ai_descriptors'] = updated.copy()
                             st.rerun()
-                        except ValueError as e:
-                            st.warning(str(e))
                         except Exception as e:
-                            st.error(f"AI generation failed: {str(e)}")
-        with col_reset:
-            if st.button("🔄 Reset to Defaults", key="reset_risk_desc"):
+                            st.error(f"Failed: {str(e)}")
+
+            # Reset button
+            if st.button("🔄 Reset", key="reset_risk_desc", help="Reset to defaults"):
                 st.session_state['audit_risk_descriptors'] = build_taxonomy_table(
                     active_df, l1_col, l2_col if l2_col else l1_col
                 )
                 if 'audit_risk_ai_descriptors' in st.session_state:
                     del st.session_state['audit_risk_ai_descriptors']
                 st.rerun()
-        with col_download:
-            docx_buf = create_single_table_docx(risk_taxonomy_df, "Risk Taxonomy")
-            st.download_button(
-                label="📝 Download as Word",
-                data=docx_buf,
-                file_name="risk_taxonomy.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key="download_risk_docx"
-            )
-
-        # Show if AI descriptors were previously generated
-        if 'audit_risk_ai_descriptors' in st.session_state:
-            st.caption("✨ AI-generated descriptions loaded. Edit below before copying.")
-
-        # Editable table
-        edited_risk = st.data_editor(
-            st.session_state['audit_risk_descriptors'],
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                'L1': st.column_config.TextColumn('L1', disabled=True),
-                'L2': st.column_config.TextColumn('L2', disabled=True),
-                'Descriptor': st.column_config.TextColumn('Descriptor', width='large'),
-            },
-            key="risk_taxonomy_editor"
-        )
-        st.session_state['audit_risk_descriptors'] = edited_risk
-
-        # Copy button
-        if st.button("📋 Copy to Clipboard", key="copy_risk_taxonomy"):
-            clipboard_data = df_to_clipboard_format(edited_risk)
-            st.code(clipboard_data, language=None)
-            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
         st.warning("Map risk columns to see the risk taxonomy.")
 
-    st.divider()
+    st.markdown("---")
 
-    # ==================== SECTION 2: ATTACK TAXONOMY ====================
-
-    st.subheader("Attack Taxonomy")
+    # ========== 2. ATTACK TAXONOMY ==========
+    st.subheader("⚔️ Attack Taxonomy")
 
     if attack_taxonomy_df is not None and not attack_taxonomy_df.empty:
         l1_col = attack_cols[0]
         l2_col = attack_cols[1] if len(attack_cols) > 1 else None
 
-        # Action buttons
-        col_ai, col_reset, col_download = st.columns([1, 1, 1])
-        with col_ai:
-            if st.button("🤖 Generate AI Descriptions", key="gen_attack_desc"):
-                if not api_key:
-                    st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
-                else:
-                    with st.spinner("Generating attack taxonomy descriptions..."):
+        col_table, col_actions = st.columns([4, 1])
+
+        with col_table:
+            if 'audit_attack_ai_descriptors' in st.session_state:
+                st.caption("✨ AI-generated descriptions loaded. Edit below.")
+
+            edited_attack = st.data_editor(
+                st.session_state['audit_attack_descriptors'],
+                column_config={
+                    "L1": st.column_config.TextColumn("L1", disabled=True),
+                    "L2": st.column_config.TextColumn("L2", disabled=True),
+                    "Descriptor": st.column_config.TextColumn(
+                        "Descriptor",
+                        help="Add a description for this attack type",
+                        width="large"
+                    ),
+                },
+                hide_index=True,
+                use_container_width=True,
+                num_rows="fixed",
+                key="attack_taxonomy_editor"
+            )
+            st.session_state['audit_attack_descriptors'] = edited_attack
+
+        with col_actions:
+            attack_docx = create_single_table_docx(edited_attack, "Attack Taxonomy")
+            st.download_button(
+                "⬇️ .docx",
+                data=attack_docx,
+                file_name="attack_taxonomy.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_attack_docx"
+            )
+
+            if api_key:
+                if st.button("✨ AI Fill", key="ai_attack_descriptors", help="Generate descriptions using AI"):
+                    with st.spinner("Generating..."):
                         try:
                             updated = _generate_taxonomy_descriptions(
                                 st.session_state['audit_attack_descriptors'],
@@ -4789,12 +4814,10 @@ def render_audit_report_assets(
                             st.session_state['audit_attack_descriptors'] = updated
                             st.session_state['audit_attack_ai_descriptors'] = updated.copy()
                             st.rerun()
-                        except ValueError as e:
-                            st.warning(str(e))
                         except Exception as e:
-                            st.error(f"AI generation failed: {str(e)}")
-        with col_reset:
-            if st.button("🔄 Reset to Defaults", key="reset_attack_desc"):
+                            st.error(f"Failed: {str(e)}")
+
+            if st.button("🔄 Reset", key="reset_attack_desc", help="Reset to defaults"):
                 attack_taxonomy = build_taxonomy_table(
                     active_df, l1_col, l2_col if l2_col else l1_col
                 )
@@ -4802,148 +4825,94 @@ def render_audit_report_assets(
                 if 'audit_attack_ai_descriptors' in st.session_state:
                     del st.session_state['audit_attack_ai_descriptors']
                 st.rerun()
-        with col_download:
-            docx_buf = create_single_table_docx(attack_taxonomy_df, "Attack Taxonomy")
-            st.download_button(
-                label="📝 Download as Word",
-                data=docx_buf,
-                file_name="attack_taxonomy.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                key="download_attack_docx"
-            )
-
-        # Show if AI descriptors were previously generated
-        if 'audit_attack_ai_descriptors' in st.session_state:
-            st.caption("✨ AI-generated descriptions loaded. Edit below before copying.")
-
-        # Editable table
-        edited_attack = st.data_editor(
-            st.session_state['audit_attack_descriptors'],
-            use_container_width=True,
-            hide_index=True,
-            num_rows="fixed",
-            column_config={
-                'L1': st.column_config.TextColumn('L1', disabled=True),
-                'L2': st.column_config.TextColumn('L2', disabled=True),
-                'Descriptor': st.column_config.TextColumn('Descriptor', width='large'),
-            },
-            key="attack_taxonomy_editor"
-        )
-        st.session_state['audit_attack_descriptors'] = edited_attack
-
-        # Copy button
-        if st.button("📋 Copy to Clipboard", key="copy_attack_taxonomy"):
-            clipboard_data = df_to_clipboard_format(edited_attack)
-            st.code(clipboard_data, language=None)
-            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
         st.warning("Map attack columns to see the attack taxonomy.")
 
-    st.divider()
+    st.markdown("---")
 
-    # ==================== SECTION 3: EXAMPLE EVALUATIONS ====================
+    # ========== 3. EXAMPLE EVALUATIONS ==========
+    st.subheader("📝 Example Evaluations")
 
-    st.subheader("Example Evaluations")
+    col_config, col_actions = st.columns([3, 1])
 
-    # Controls row
-    col_num, col_resample, col_download = st.columns([1, 1, 1])
-    with col_num:
-        new_num = st.number_input(
-            "Number of examples",
-            min_value=1,
-            max_value=50,
-            value=st.session_state.get('audit_num_examples', 10),
-            key="audit_num_examples_input"
-        )
-        if new_num != st.session_state.get('audit_num_examples', 10):
-            st.session_state['audit_num_examples'] = new_num
-            if 'audit_example_evals' in st.session_state:
-                del st.session_state['audit_example_evals']
-            st.rerun()
+    with col_config:
+        col_n, col_resample = st.columns([1, 1])
+        with col_n:
+            new_num = st.number_input(
+                "Number of examples",
+                min_value=1,
+                max_value=min(50, len(active_df)),
+                value=st.session_state.get('audit_num_examples', 10),
+                key="num_examples_input"
+            )
+            if new_num != st.session_state.get('audit_num_examples', 10):
+                st.session_state['audit_num_examples'] = new_num
+                if 'audit_example_evals' in st.session_state:
+                    del st.session_state['audit_example_evals']
+                st.rerun()
 
-    with col_resample:
-        if st.button("🔄 Resample", key="audit_resample"):
-            st.session_state['audit_resample_seed'] += 1
-            if 'audit_example_evals' in st.session_state:
-                del st.session_state['audit_example_evals']
-            st.rerun()
+        with col_resample:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Resample", key="resample_examples"):
+                import random
+                st.session_state['audit_resample_seed'] = random.randint(0, 10000)
+                if 'audit_example_evals' in st.session_state:
+                    del st.session_state['audit_example_evals']
+                st.rerun()
 
-    with col_download:
+    with col_actions:
         if examples_df is not None and not examples_df.empty:
-            docx_buf = create_single_table_docx(examples_df, "Example Evaluations")
+            examples_docx = create_single_table_docx(examples_df, "Example Evaluations")
             st.download_button(
-                label="📝 Download as Word",
-                data=docx_buf,
+                "⬇️ .docx",
+                data=examples_docx,
                 file_name="example_evaluations.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key="download_examples_docx"
             )
 
-    # Display examples
     if examples_df is not None and not examples_df.empty:
-        st.dataframe(examples_df, use_container_width=True, hide_index=True)
-
-        if st.button("📋 Copy to Clipboard", key="copy_examples"):
-            clipboard_data = df_to_clipboard_format(examples_df)
-            st.code(clipboard_data, language=None)
-            st.success("Table ready to copy (Ctrl+C / Cmd+C)")
+        st.dataframe(examples_df, hide_index=True, use_container_width=True)
     else:
         st.info("No data available for sampling.")
 
-    st.divider()
+    st.markdown("---")
 
-    # ==================== SECTION 4: RESULTS SUMMARY TABLES ====================
-
-    st.subheader("Results Summary Tables")
+    # ========== 4. RESULTS SUMMARY TABLES ==========
+    st.subheader("📈 Results Summary")
 
     if 'Severity' not in active_df.columns:
         st.warning("Severity column required for results summary.")
     else:
-        col_left, col_right = st.columns([1, 1])
+        col_attack, col_risk = st.columns(2)
 
-        with col_left:
-            st.markdown("**Results by Attack L1**")
+        with col_attack:
+            st.markdown("**Results by Attack Type**")
             if not results_by_attack_df.empty:
-                st.dataframe(results_by_attack_df, use_container_width=True, hide_index=True)
-
-                col_copy, col_dl = st.columns(2)
-                with col_copy:
-                    if st.button("📋 Copy", key="copy_attack_summary"):
-                        clipboard_data = df_to_clipboard_format(results_by_attack_df)
-                        st.code(clipboard_data, language=None)
-                        st.success("Ready to copy!")
-                with col_dl:
-                    docx_buf = create_single_table_docx(results_by_attack_df, "Results by Attack Type")
-                    st.download_button(
-                        label="📝 Word",
-                        data=docx_buf,
-                        file_name="results_by_attack.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key="download_attack_results_docx"
-                    )
+                st.dataframe(results_by_attack_df, hide_index=True, use_container_width=True)
+                attack_results_docx = create_single_table_docx(results_by_attack_df, "Results by Attack Type")
+                st.download_button(
+                    "⬇️ Download .docx",
+                    data=attack_results_docx,
+                    file_name="results_by_attack.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_attack_results_docx"
+                )
             else:
                 st.warning("Attack L1 column not mapped.")
 
-        with col_right:
-            st.markdown("**Results by Risk L2**")
+        with col_risk:
+            st.markdown("**Results by Risk Category**")
             if not results_by_risk_df.empty:
-                st.dataframe(results_by_risk_df, use_container_width=True, hide_index=True)
-
-                col_copy, col_dl = st.columns(2)
-                with col_copy:
-                    if st.button("📋 Copy", key="copy_risk_summary"):
-                        clipboard_data = df_to_clipboard_format(results_by_risk_df)
-                        st.code(clipboard_data, language=None)
-                        st.success("Ready to copy!")
-                with col_dl:
-                    docx_buf = create_single_table_docx(results_by_risk_df, "Results by Risk Category")
-                    st.download_button(
-                        label="📝 Word",
-                        data=docx_buf,
-                        file_name="results_by_risk.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key="download_risk_results_docx"
-                    )
+                st.dataframe(results_by_risk_df, hide_index=True, use_container_width=True)
+                risk_results_docx = create_single_table_docx(results_by_risk_df, "Results by Risk Category")
+                st.download_button(
+                    "⬇️ Download .docx",
+                    data=risk_results_docx,
+                    file_name="results_by_risk.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key="download_risk_results_docx"
+                )
             else:
                 st.warning("Risk L2 column not mapped.")
 
