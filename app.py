@@ -4336,12 +4336,18 @@ def render_audit_report_assets(
 ) -> None:
     """Render audit report assets for export.
 
+    Restructured to build all tables first, then display with export options.
+
     Args:
         df1: Round 1 dataframe
         df2: Round 2 dataframe (or None)
         mapping: Column mapping dict
         api_key: Anthropic API key
     """
+    from utils.docx_export import create_audit_report_docx, create_single_table_docx
+
+    # ==================== HELPER FUNCTIONS ====================
+
     # Canonical Attack L1 sort order
     # Note: "Social Engineering" and "Manipulative" are interchangeable (customer-dependent naming)
     ATTACK_L1_ORDER = ["Benign", "Social Engineering", "Adversarial"]
@@ -4364,7 +4370,34 @@ def render_audit_report_assets(
         df = df.sort_values(['_sort_order', '_sort_alpha']).drop(columns=['_sort_order', '_sort_alpha'])
         return df.reset_index(drop=True)
 
-    def _build_summary_table(df: pd.DataFrame, group_col: str, use_attack_order: bool = False) -> pd.DataFrame:
+    def build_taxonomy_table(df: pd.DataFrame, l1_col: str, l2_col: str) -> pd.DataFrame:
+        """Build a taxonomy table with L1, L2, and empty Descriptor columns."""
+        if l1_col not in df.columns:
+            return pd.DataFrame(columns=['L1', 'L2', 'Descriptor'])
+
+        if l2_col not in df.columns:
+            # Only L1 available
+            l1_values = sorted(df[l1_col].dropna().unique())
+            return pd.DataFrame({
+                'L1': l1_values,
+                'L2': [''] * len(l1_values),
+                'Descriptor': [''] * len(l1_values),
+            })
+
+        # Build L1/L2 pairs
+        rows = []
+        l1_values = sorted(df[l1_col].dropna().unique())
+        for l1 in l1_values:
+            l2_values = sorted(df[df[l1_col] == l1][l2_col].dropna().unique())
+            if not l2_values:
+                rows.append({'L1': l1, 'L2': '', 'Descriptor': ''})
+            else:
+                for l2 in l2_values:
+                    rows.append({'L1': l1, 'L2': l2, 'Descriptor': ''})
+
+        return pd.DataFrame(rows)
+
+    def build_results_table(df: pd.DataFrame, group_col: str, use_attack_order: bool = False) -> pd.DataFrame:
         """Build a summary table grouped by a column with severity breakdown."""
         if group_col not in df.columns or 'Severity' not in df.columns:
             return pd.DataFrame()
@@ -4383,10 +4416,8 @@ def render_audit_report_assets(
         stats['Pass %'] = (stats['Pass'] / stats['Count'] * 100).round(1)
 
         if use_attack_order:
-            # Apply canonical Attack L1 sort order
             stats = sort_by_attack_order(stats, 'Category')
         else:
-            # Default: sort by Pass % ascending
             stats = stats.sort_values('Pass %', ascending=True).reset_index(drop=True)
 
         # Format Pass % as string
@@ -4395,13 +4426,100 @@ def render_audit_report_assets(
 
         return display
 
+    def extract_prompt(text) -> str:
+        """Extract first user message from transcript, or return truncated text."""
+        if pd.isna(text) or not str(text).strip():
+            return ''
+        text = str(text)
+
+        import re
+        patterns = [
+            r'(?:^|\n)\s*(?:User|Human|user|human)\s*[:\-]\s*(.*?)(?:\n\s*(?:Assistant|AI|assistant|ai|System|system)\s*[:\-]|$)',
+            r'(?:^|\n)\s*(?:role\s*[:\-]\s*user.*?content\s*[:\-]\s*)(.*?)(?:\n|$)',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            if match:
+                extracted = match.group(1).strip()
+                if extracted:
+                    return extracted[:500] + '...' if len(extracted) > 500 else extracted
+
+        return text[:500] + '...' if len(text) > 500 else text
+
+    def stratified_sample(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
+        """Sample n rows stratified by Risk L1 if available."""
+        n = min(n, len(df))
+        if n == 0:
+            return pd.DataFrame()
+
+        if 'Risk L1' in df.columns:
+            categories = df['Risk L1'].dropna().unique()
+            if len(categories) > 1:
+                per_category = max(1, n // len(categories))
+
+                samples = []
+                for cat in categories:
+                    cat_df = df[df['Risk L1'] == cat]
+                    cat_n = min(per_category, len(cat_df))
+                    if cat_n > 0:
+                        samples.append(cat_df.sample(n=cat_n, random_state=seed))
+
+                result = pd.concat(samples, ignore_index=True)
+
+                if len(result) < n:
+                    remaining_idx = df.index.difference(result.index)
+                    extra_n = min(n - len(result), len(remaining_idx))
+                    if extra_n > 0:
+                        extra = df.loc[remaining_idx].sample(n=extra_n, random_state=seed + 1)
+                        result = pd.concat([result, extra], ignore_index=True)
+
+                return result.head(n)
+
+        return df.sample(n=n, random_state=seed)
+
+    def build_examples_table(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
+        """Build stratified sample of example evaluations."""
+        # Determine prompt column
+        prompt_col = None
+        if 'Transcript' in df.columns:
+            prompt_col = 'Transcript'
+        elif 'Justification' in df.columns:
+            prompt_col = 'Justification'
+
+        sampled = stratified_sample(df, n, seed)
+        if sampled.empty:
+            return pd.DataFrame()
+
+        # Build display columns
+        display_cols = []
+        for col in ['Risk L1', 'Risk L2', 'Attack L1', 'Attack L2']:
+            if col in sampled.columns:
+                display_cols.append(col)
+
+        if not display_cols:
+            return pd.DataFrame()
+
+        result = sampled[display_cols].copy()
+
+        # Add Prompt column
+        if prompt_col and prompt_col in sampled.columns:
+            result['Prompt'] = sampled[prompt_col].apply(extract_prompt)
+
+        # Sort by attack order if available
+        if 'Attack L1' in result.columns:
+            result = sort_by_attack_order(result, 'Attack L1')
+
+        return result.reset_index(drop=True)
+
+    # ==================== DATA SOURCE SELECTION ====================
+
     st.header("Audit Report Assets")
 
     # AIUC-1 branding banner
     st.markdown("""
     <div class="audit-banner">
         <div class="audit-badge">AIUC-1 AUDIT ASSETS</div>
-        <p>Generate publication-ready tables for your audit report. All tables are formatted for easy copy-paste into Google Docs or Word.</p>
+        <p>Generate publication-ready tables for your audit report. Export to CSV or Word format.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -4415,38 +4533,133 @@ def render_audit_report_assets(
             key="audit_round_selector"
         )
         active_df = df2 if audit_round == "Round 2" else df1
+        round_label = audit_round
 
         # Clear cached tables when round changes
         prev_round = st.session_state.get('_audit_prev_round')
         if prev_round is not None and prev_round != audit_round:
             for key in ['audit_risk_descriptors', 'audit_attack_descriptors',
                         'audit_risk_ai_descriptors', 'audit_attack_ai_descriptors',
-                        'audit_example_evals', 'audit_examples']:
+                        'audit_example_evals']:
                 st.session_state.pop(key, None)
         st.session_state['_audit_prev_round'] = audit_round
     else:
         active_df = df1
+        round_label = "Round 1"
 
-    # --- Section 1: Risk Taxonomy ---
-    st.subheader("Risk Taxonomy")
+    # ==================== BUILD ALL TABLES ====================
 
+    # Get column mappings
     risk_cols = [f'Risk L{i+1}' for i in range(len(mapping.get('risk_hierarchy', [])))]
     risk_cols = [c for c in risk_cols if c in active_df.columns]
+    attack_cols = [f'Attack L{i+1}' for i in range(len(mapping.get('attack_hierarchy', [])))]
+    attack_cols = [c for c in attack_cols if c in active_df.columns]
 
+    # 1. Risk Taxonomy Table
+    risk_taxonomy_df = None
     if len(risk_cols) >= 1:
         l1_col = risk_cols[0]
         l2_col = risk_cols[1] if len(risk_cols) > 1 else None
-
-        # Initialize session state for risk descriptors
         if 'audit_risk_descriptors' not in st.session_state:
-            st.session_state['audit_risk_descriptors'] = _build_taxonomy_table(
+            st.session_state['audit_risk_descriptors'] = build_taxonomy_table(
                 active_df, l1_col, l2_col if l2_col else l1_col
             )
+        risk_taxonomy_df = st.session_state['audit_risk_descriptors']
+
+    # 2. Attack Taxonomy Table
+    attack_taxonomy_df = None
+    if len(attack_cols) >= 1:
+        l1_col = attack_cols[0]
+        l2_col = attack_cols[1] if len(attack_cols) > 1 else None
+        if 'audit_attack_descriptors' not in st.session_state:
+            attack_taxonomy = build_taxonomy_table(
+                active_df, l1_col, l2_col if l2_col else l1_col
+            )
+            st.session_state['audit_attack_descriptors'] = sort_by_attack_order(attack_taxonomy, 'L1')
+        attack_taxonomy_df = st.session_state['audit_attack_descriptors']
+
+    # 3. Example Evaluations Table
+    if 'audit_resample_seed' not in st.session_state:
+        st.session_state['audit_resample_seed'] = 42
+    num_examples = st.session_state.get('audit_num_examples', 10)
+    current_seed = st.session_state['audit_resample_seed']
+
+    if 'audit_example_evals' not in st.session_state or st.session_state.get('_audit_last_n') != num_examples:
+        st.session_state['audit_example_evals'] = build_examples_table(active_df, num_examples, current_seed)
+        st.session_state['_audit_last_n'] = num_examples
+    examples_df = st.session_state['audit_example_evals']
+
+    # 4. Results Tables
+    results_by_attack_df = build_results_table(active_df, 'Attack L1', use_attack_order=True)
+    results_by_risk_df = build_results_table(active_df, 'Risk L2', use_attack_order=False)
+
+    # Collect all tables for bulk export (filter out None/empty)
+    all_tables = []
+    if risk_taxonomy_df is not None and not risk_taxonomy_df.empty:
+        all_tables.append(("Risk Taxonomy", risk_taxonomy_df))
+    if attack_taxonomy_df is not None and not attack_taxonomy_df.empty:
+        all_tables.append(("Attack Taxonomy", attack_taxonomy_df))
+    if examples_df is not None and not examples_df.empty:
+        all_tables.append(("Example Evaluations", examples_df))
+    if not results_by_attack_df.empty:
+        all_tables.append(("Results by Attack Type", results_by_attack_df))
+    if not results_by_risk_df.empty:
+        all_tables.append(("Results by Risk Category", results_by_risk_df))
+
+    # ==================== EXPORT SECTION (TOP) ====================
+
+    st.markdown("### 📥 Export All Audit Assets")
+
+    if all_tables:
+        col_csv, col_docx = st.columns(2)
+
+        with col_csv:
+            # Build combined CSV
+            csv_parts = []
+            for title, df in all_tables:
+                csv_parts.append(f"# SECTION: {title}")
+                csv_parts.append(df.to_csv(index=False))
+            combined_csv = "\n".join(csv_parts)
+
+            st.download_button(
+                label="📄 Download All as CSV",
+                data=combined_csv,
+                file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        with col_docx:
+            # Generate Word document
+            docx_buffer = create_audit_report_docx(
+                tables=all_tables,
+                report_title="AIUC-1 Audit Report Assets",
+                subtitle=f"Data Source: {round_label}"
+            )
+            st.download_button(
+                label="📝 Download All as Word",
+                data=docx_buffer,
+                file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+    else:
+        st.info("No data available to export. Ensure columns are mapped correctly.")
+
+    st.divider()
+
+    # ==================== SECTION 1: RISK TAXONOMY ====================
+
+    st.subheader("Risk Taxonomy")
+
+    if risk_taxonomy_df is not None and not risk_taxonomy_df.empty:
+        l1_col = risk_cols[0]
+        l2_col = risk_cols[1] if len(risk_cols) > 1 else None
 
         # Action buttons
-        col_ai, col_reset, col_spacer = st.columns([1, 1, 2])
+        col_ai, col_reset, col_download = st.columns([1, 1, 1])
         with col_ai:
-            if st.button("Generate AI Descriptions", key="gen_risk_desc"):
+            if st.button("🤖 Generate AI Descriptions", key="gen_risk_desc"):
                 if not api_key:
                     st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
                 else:
@@ -4465,17 +4678,26 @@ def render_audit_report_assets(
                         except Exception as e:
                             st.error(f"AI generation failed: {str(e)}")
         with col_reset:
-            if st.button("Reset to Defaults", key="reset_risk_desc"):
-                st.session_state['audit_risk_descriptors'] = _build_taxonomy_table(
+            if st.button("🔄 Reset to Defaults", key="reset_risk_desc"):
+                st.session_state['audit_risk_descriptors'] = build_taxonomy_table(
                     active_df, l1_col, l2_col if l2_col else l1_col
                 )
                 if 'audit_risk_ai_descriptors' in st.session_state:
                     del st.session_state['audit_risk_ai_descriptors']
                 st.rerun()
+        with col_download:
+            docx_buf = create_single_table_docx(risk_taxonomy_df, "Risk Taxonomy")
+            st.download_button(
+                label="📝 Download as Word",
+                data=docx_buf,
+                file_name="risk_taxonomy.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_risk_docx"
+            )
 
         # Show if AI descriptors were previously generated
         if 'audit_risk_ai_descriptors' in st.session_state:
-            st.caption("AI-generated descriptions loaded. Edit below before copying.")
+            st.caption("✨ AI-generated descriptions loaded. Edit below before copying.")
 
         # Editable table
         edited_risk = st.data_editor(
@@ -4493,7 +4715,7 @@ def render_audit_report_assets(
         st.session_state['audit_risk_descriptors'] = edited_risk
 
         # Copy button
-        if st.button("Copy to Clipboard", key="copy_risk_taxonomy"):
+        if st.button("📋 Copy to Clipboard", key="copy_risk_taxonomy"):
             clipboard_data = df_to_clipboard_format(edited_risk)
             st.code(clipboard_data, language=None)
             st.success("Table ready to copy (Ctrl+C / Cmd+C)")
@@ -4502,27 +4724,18 @@ def render_audit_report_assets(
 
     st.divider()
 
-    # --- Section 2: Attack Taxonomy ---
+    # ==================== SECTION 2: ATTACK TAXONOMY ====================
+
     st.subheader("Attack Taxonomy")
 
-    attack_cols = [f'Attack L{i+1}' for i in range(len(mapping.get('attack_hierarchy', [])))]
-    attack_cols = [c for c in attack_cols if c in active_df.columns]
-
-    if len(attack_cols) >= 1:
+    if attack_taxonomy_df is not None and not attack_taxonomy_df.empty:
         l1_col = attack_cols[0]
         l2_col = attack_cols[1] if len(attack_cols) > 1 else None
 
-        # Initialize session state for attack descriptors (sorted by canonical order)
-        if 'audit_attack_descriptors' not in st.session_state:
-            attack_taxonomy = _build_taxonomy_table(
-                active_df, l1_col, l2_col if l2_col else l1_col
-            )
-            st.session_state['audit_attack_descriptors'] = sort_by_attack_order(attack_taxonomy, 'L1')
-
         # Action buttons
-        col_ai, col_reset, col_spacer = st.columns([1, 1, 2])
+        col_ai, col_reset, col_download = st.columns([1, 1, 1])
         with col_ai:
-            if st.button("Generate AI Descriptions", key="gen_attack_desc"):
+            if st.button("🤖 Generate AI Descriptions", key="gen_attack_desc"):
                 if not api_key:
                     st.warning("Enter an Anthropic API key in the sidebar to use AI features.")
                 else:
@@ -4541,18 +4754,27 @@ def render_audit_report_assets(
                         except Exception as e:
                             st.error(f"AI generation failed: {str(e)}")
         with col_reset:
-            if st.button("Reset to Defaults", key="reset_attack_desc"):
-                attack_taxonomy = _build_taxonomy_table(
+            if st.button("🔄 Reset to Defaults", key="reset_attack_desc"):
+                attack_taxonomy = build_taxonomy_table(
                     active_df, l1_col, l2_col if l2_col else l1_col
                 )
                 st.session_state['audit_attack_descriptors'] = sort_by_attack_order(attack_taxonomy, 'L1')
                 if 'audit_attack_ai_descriptors' in st.session_state:
                     del st.session_state['audit_attack_ai_descriptors']
                 st.rerun()
+        with col_download:
+            docx_buf = create_single_table_docx(attack_taxonomy_df, "Attack Taxonomy")
+            st.download_button(
+                label="📝 Download as Word",
+                data=docx_buf,
+                file_name="attack_taxonomy.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_attack_docx"
+            )
 
         # Show if AI descriptors were previously generated
         if 'audit_attack_ai_descriptors' in st.session_state:
-            st.caption("AI-generated descriptions loaded. Edit below before copying.")
+            st.caption("✨ AI-generated descriptions loaded. Edit below before copying.")
 
         # Editable table
         edited_attack = st.data_editor(
@@ -4570,7 +4792,7 @@ def render_audit_report_assets(
         st.session_state['audit_attack_descriptors'] = edited_attack
 
         # Copy button
-        if st.button("Copy to Clipboard", key="copy_attack_taxonomy"):
+        if st.button("📋 Copy to Clipboard", key="copy_attack_taxonomy"):
             clipboard_data = df_to_clipboard_format(edited_attack)
             st.code(clipboard_data, language=None)
             st.success("Table ready to copy (Ctrl+C / Cmd+C)")
@@ -4579,124 +4801,50 @@ def render_audit_report_assets(
 
     st.divider()
 
-    # --- Section 3: Example Evaluations ---
+    # ==================== SECTION 3: EXAMPLE EVALUATIONS ====================
+
     st.subheader("Example Evaluations")
 
-    # Initialize resample counter
-    if 'audit_resample_seed' not in st.session_state:
-        st.session_state['audit_resample_seed'] = 42
+    # Controls row
+    col_num, col_resample, col_download = st.columns([1, 1, 1])
+    with col_num:
+        new_num = st.number_input(
+            "Number of examples",
+            min_value=1,
+            max_value=50,
+            value=st.session_state.get('audit_num_examples', 10),
+            key="audit_num_examples_input"
+        )
+        if new_num != st.session_state.get('audit_num_examples', 10):
+            st.session_state['audit_num_examples'] = new_num
+            if 'audit_example_evals' in st.session_state:
+                del st.session_state['audit_example_evals']
+            st.rerun()
 
-    num_examples = st.number_input(
-        "Number of examples", min_value=1, max_value=50, value=10, key="audit_num_examples"
-    )
-
-    # Determine prompt column: prefer Transcript, fallback to Justification
-    prompt_source_col = None
-    if 'Transcript' in active_df.columns:
-        prompt_source_col = 'Transcript'
-    elif 'Justification' in active_df.columns:
-        prompt_source_col = 'Justification'
-
-    def _extract_prompt(text):
-        """Extract first user message from transcript, or return text as-is."""
-        if pd.isna(text) or not str(text).strip():
-            return ''
-        text = str(text)
-        # Try to extract first user message from common transcript formats
-        # Format: "User: ...\nAssistant: ..." or "human: ...\nassistant: ..."
-        import re
-        # Look for first user/human turn
-        patterns = [
-            r'(?:^|\n)\s*(?:User|Human|user|human)\s*[:\-]\s*(.*?)(?:\n\s*(?:Assistant|AI|assistant|ai|System|system)\s*[:\-]|$)',
-            r'(?:^|\n)\s*(?:role\s*[:\-]\s*user.*?content\s*[:\-]\s*)(.*?)(?:\n|$)',
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-            if match:
-                extracted = match.group(1).strip()
-                if extracted:
-                    return extracted[:500]  # Limit length for display
-
-        # No pattern matched — return first 500 chars as-is
-        return text[:500]
-
-    # Stratified sampling across Risk L1 categories
-    def _stratified_sample(df, n, seed):
-        """Sample n rows stratified by Risk L1 if available."""
-        n = min(n, len(df))
-        if n == 0:
-            return pd.DataFrame()
-
-        if 'Risk L1' in df.columns:
-            categories = df['Risk L1'].dropna().unique()
-            if len(categories) > 1:
-                # Allocate samples proportionally, at least 1 per category
-                per_category = max(1, n // len(categories))
-                remainder = n - (per_category * len(categories))
-
-                samples = []
-                for cat in categories:
-                    cat_df = df[df['Risk L1'] == cat]
-                    cat_n = min(per_category, len(cat_df))
-                    if cat_n > 0:
-                        samples.append(cat_df.sample(n=cat_n, random_state=seed))
-
-                result = pd.concat(samples, ignore_index=True)
-
-                # Fill remainder from full dataframe if needed
-                if len(result) < n:
-                    remaining_idx = df.index.difference(result.index)
-                    extra_n = min(n - len(result), len(remaining_idx))
-                    if extra_n > 0:
-                        extra = df.loc[remaining_idx].sample(n=extra_n, random_state=seed + 1)
-                        result = pd.concat([result, extra], ignore_index=True)
-
-                return result.head(n)
-
-        # Fallback: simple random sample
-        return df.sample(n=n, random_state=seed)
-
-    # Sample button row
-    col_resample, col_spacer = st.columns([1, 3])
     with col_resample:
-        if st.button("Resample", key="audit_resample"):
+        if st.button("🔄 Resample", key="audit_resample"):
             st.session_state['audit_resample_seed'] += 1
             if 'audit_example_evals' in st.session_state:
                 del st.session_state['audit_example_evals']
             st.rerun()
 
-    # Generate or retrieve examples
-    current_seed = st.session_state['audit_resample_seed']
+    with col_download:
+        if examples_df is not None and not examples_df.empty:
+            docx_buf = create_single_table_docx(examples_df, "Example Evaluations")
+            st.download_button(
+                label="📝 Download as Word",
+                data=docx_buf,
+                file_name="example_evaluations.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="download_examples_docx"
+            )
 
-    if 'audit_example_evals' not in st.session_state or st.session_state.get('_audit_last_n') != num_examples:
-        sampled = _stratified_sample(active_df, num_examples, current_seed)
+    # Display examples
+    if examples_df is not None and not examples_df.empty:
+        st.dataframe(examples_df, use_container_width=True, hide_index=True)
 
-        # Build display table
-        display_cols_map = {}
-        for col in ['Risk L1', 'Risk L2', 'Attack L1', 'Attack L2']:
-            if col in sampled.columns:
-                display_cols_map[col] = col
-
-        # Add Prompt column
-        if prompt_source_col and prompt_source_col in sampled.columns:
-            sampled = sampled.copy()
-            sampled['Prompt'] = sampled[prompt_source_col].apply(_extract_prompt)
-            display_cols_map['Prompt'] = 'Prompt'
-
-        display_cols = list(display_cols_map.values())
-        if display_cols:
-            st.session_state['audit_example_evals'] = sampled[display_cols].reset_index(drop=True)
-        else:
-            st.session_state['audit_example_evals'] = pd.DataFrame()
-        st.session_state['_audit_last_n'] = num_examples
-
-    examples_display = st.session_state['audit_example_evals']
-
-    if not examples_display.empty:
-        st.dataframe(examples_display, use_container_width=True, hide_index=True)
-
-        if st.button("Copy to Clipboard", key="copy_examples"):
-            clipboard_data = df_to_clipboard_format(examples_display)
+        if st.button("📋 Copy to Clipboard", key="copy_examples"):
+            clipboard_data = df_to_clipboard_format(examples_df)
             st.code(clipboard_data, language=None)
             st.success("Table ready to copy (Ctrl+C / Cmd+C)")
     else:
@@ -4704,7 +4852,8 @@ def render_audit_report_assets(
 
     st.divider()
 
-    # --- Section 4: Results Summary Tables ---
+    # ==================== SECTION 4: RESULTS SUMMARY TABLES ====================
+
     st.subheader("Results Summary Tables")
 
     if 'Severity' not in active_df.columns:
@@ -4714,85 +4863,49 @@ def render_audit_report_assets(
 
         with col_left:
             st.markdown("**Results by Attack L1**")
-            if 'Attack L1' in active_df.columns:
-                attack_summary = _build_summary_table(active_df, 'Attack L1', use_attack_order=True)
-                if not attack_summary.empty:
-                    st.dataframe(attack_summary, use_container_width=True, hide_index=True)
+            if not results_by_attack_df.empty:
+                st.dataframe(results_by_attack_df, use_container_width=True, hide_index=True)
 
-                    if st.button("Copy to Clipboard", key="copy_attack_summary"):
-                        clipboard_data = df_to_clipboard_format(attack_summary)
+                col_copy, col_dl = st.columns(2)
+                with col_copy:
+                    if st.button("📋 Copy", key="copy_attack_summary"):
+                        clipboard_data = df_to_clipboard_format(results_by_attack_df)
                         st.code(clipboard_data, language=None)
-                        st.success("Table ready to copy (Ctrl+C / Cmd+C)")
-                else:
-                    st.info("No data available.")
+                        st.success("Ready to copy!")
+                with col_dl:
+                    docx_buf = create_single_table_docx(results_by_attack_df, "Results by Attack Type")
+                    st.download_button(
+                        label="📝 Word",
+                        data=docx_buf,
+                        file_name="results_by_attack.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_attack_results_docx"
+                    )
             else:
                 st.warning("Attack L1 column not mapped.")
 
         with col_right:
             st.markdown("**Results by Risk L2**")
-            if 'Risk L2' in active_df.columns:
-                risk_summary = _build_summary_table(active_df, 'Risk L2')
-                if not risk_summary.empty:
-                    st.dataframe(risk_summary, use_container_width=True, hide_index=True)
+            if not results_by_risk_df.empty:
+                st.dataframe(results_by_risk_df, use_container_width=True, hide_index=True)
 
-                    if st.button("Copy to Clipboard", key="copy_risk_summary"):
-                        clipboard_data = df_to_clipboard_format(risk_summary)
+                col_copy, col_dl = st.columns(2)
+                with col_copy:
+                    if st.button("📋 Copy", key="copy_risk_summary"):
+                        clipboard_data = df_to_clipboard_format(results_by_risk_df)
                         st.code(clipboard_data, language=None)
-                        st.success("Table ready to copy (Ctrl+C / Cmd+C)")
-                else:
-                    st.info("No data available.")
+                        st.success("Ready to copy!")
+                with col_dl:
+                    docx_buf = create_single_table_docx(results_by_risk_df, "Results by Risk Category")
+                    st.download_button(
+                        label="📝 Word",
+                        data=docx_buf,
+                        file_name="results_by_risk.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_risk_results_docx"
+                    )
             else:
                 st.warning("Risk L2 column not mapped.")
-
-    # --- Section 5: Download All as CSV ---
-    st.markdown("---")
-    st.markdown("### 📥 Export All Audit Assets")
-
-    # Build combined CSV with section headers
-    csv_parts = []
-
-    # Risk Taxonomy
-    risk_key = 'audit_risk_taxonomy'
-    if risk_key in st.session_state and st.session_state[risk_key] is not None:
-        csv_parts.append("# SECTION: Risk Taxonomy")
-        csv_parts.append(st.session_state[risk_key].to_csv(index=False))
-
-    # Attack Taxonomy
-    attack_key = 'audit_attack_taxonomy'
-    if attack_key in st.session_state and st.session_state[attack_key] is not None:
-        csv_parts.append("# SECTION: Attack Taxonomy")
-        csv_parts.append(st.session_state[attack_key].to_csv(index=False))
-
-    # Example Evaluations
-    examples_key = 'audit_examples'
-    if examples_key in st.session_state and st.session_state[examples_key] is not None:
-        csv_parts.append("# SECTION: Example Evaluations")
-        csv_parts.append(st.session_state[examples_key].to_csv(index=False))
-
-    # Summary Tables
-    if 'Attack L1' in active_df.columns:
-        attack_summary = _build_summary_table(active_df, 'Attack L1', use_attack_order=True)
-        if not attack_summary.empty:
-            csv_parts.append("# SECTION: Results by Attack L1")
-            csv_parts.append(attack_summary.to_csv(index=False))
-
-    if 'Risk L2' in active_df.columns:
-        risk_summary = _build_summary_table(active_df, 'Risk L2')
-        if not risk_summary.empty:
-            csv_parts.append("# SECTION: Results by Risk L2")
-            csv_parts.append(risk_summary.to_csv(index=False))
-
-    if csv_parts:
-        combined_csv = "\n".join(csv_parts)
-        st.download_button(
-            label="📥 Download All as CSV",
-            data=combined_csv,
-            file_name="audit_report_assets.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    else:
-        st.info("No data available to export. Generate tables above first.")
 
 
 def main() -> None:
