@@ -4511,6 +4511,84 @@ def render_audit_report_assets(
 
         return result.reset_index(drop=True)
 
+    def render_export_section(all_tables, round_label: str):
+        """Render the export controls section at the top."""
+        from utils.docx_export import create_audit_report_docx
+
+        st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+                border: 1px solid #2a2a2a;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 24px;
+            ">
+                <h3 style="margin: 0 0 8px 0; color: #6366f1;">📤 Export Audit Report Assets</h3>
+                <p style="margin: 0; color: #888888; font-size: 14px;">
+                    Download publication-ready tables formatted for Google Docs and Word.
+                </p>
+            </div>
+        """, unsafe_allow_html=True)
+
+        col1, col2, col3 = st.columns([2, 2, 1])
+
+        with col1:
+            report_title = st.text_input(
+                "Report title",
+                value="AIUC-1 Audit Report Assets",
+                key="export_report_title"
+            )
+
+        with col2:
+            report_subtitle = st.text_input(
+                "Subtitle (optional)",
+                value="",
+                placeholder=f"e.g., {round_label} Evaluation",
+                key="export_report_subtitle"
+            )
+
+        with col3:
+            st.markdown("<br>", unsafe_allow_html=True)  # Spacing to align button
+
+            if all_tables:
+                # Generate the Word document
+                docx_buffer = create_audit_report_docx(
+                    tables=all_tables,
+                    report_title=report_title,
+                    subtitle=report_subtitle if report_subtitle else None
+                )
+
+                st.download_button(
+                    label="⬇️ Download (.docx)",
+                    data=docx_buffer,
+                    file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    type="primary",
+                    key="download_all_docx"
+                )
+            else:
+                st.button("⬇️ Download (.docx)", disabled=True, key="download_all_docx_disabled")
+
+        # CSV download as secondary option
+        if all_tables:
+            csv_parts = []
+            for title, tbl_df in all_tables:
+                csv_parts.append(f"# SECTION: {title}")
+                csv_parts.append(tbl_df.to_csv(index=False))
+            combined_csv = "\n".join(csv_parts)
+
+            st.download_button(
+                label="📄 Download as CSV (alternative)",
+                data=combined_csv,
+                file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.csv",
+                mime="text/csv",
+                key="download_all_csv"
+            )
+
+        st.caption("💡 Open the downloaded file in Google Docs or Word. Tables are pre-formatted and ready to copy-paste into your audit report.")
+
+        st.markdown("---")
+
     # ==================== DATA SOURCE SELECTION ====================
 
     st.header("Audit Report Assets")
@@ -4608,45 +4686,7 @@ def render_audit_report_assets(
 
     # ==================== EXPORT SECTION (TOP) ====================
 
-    st.markdown("### 📥 Export All Audit Assets")
-
-    if all_tables:
-        col_csv, col_docx = st.columns(2)
-
-        with col_csv:
-            # Build combined CSV
-            csv_parts = []
-            for title, df in all_tables:
-                csv_parts.append(f"# SECTION: {title}")
-                csv_parts.append(df.to_csv(index=False))
-            combined_csv = "\n".join(csv_parts)
-
-            st.download_button(
-                label="📄 Download All as CSV",
-                data=combined_csv,
-                file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-
-        with col_docx:
-            # Generate Word document
-            docx_buffer = create_audit_report_docx(
-                tables=all_tables,
-                report_title="AIUC-1 Audit Report Assets",
-                subtitle=f"Data Source: {round_label}"
-            )
-            st.download_button(
-                label="📝 Download All as Word",
-                data=docx_buffer,
-                file_name=f"audit_report_assets_{round_label.lower().replace(' ', '_')}.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                use_container_width=True,
-            )
-    else:
-        st.info("No data available to export. Ensure columns are mapped correctly.")
-
-    st.divider()
+    render_export_section(all_tables, round_label)
 
     # ==================== SECTION 1: RISK TAXONOMY ====================
 
