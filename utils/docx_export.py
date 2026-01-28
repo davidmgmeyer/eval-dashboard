@@ -30,10 +30,16 @@ SEVERITY_COLORS = {
 }
 
 
+def rgb_to_hex(color: RGBColor) -> str:
+    """Convert RGBColor to hex string (without #)."""
+    return f'{color[0]:02X}{color[1]:02X}{color[2]:02X}'
+
+
 def set_cell_background(cell, color: RGBColor):
     """Set background color of a table cell."""
+    hex_color = rgb_to_hex(color)
     shading_elm = parse_xml(
-        f'<w:shd {nsdecls("w")} w:fill="{color.hex()}" w:val="clear"/>'
+        f'<w:shd {nsdecls("w")} w:fill="{hex_color}" w:val="clear"/>'
     )
     cell._tc.get_or_add_tcPr().append(shading_elm)
 
